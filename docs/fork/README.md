@@ -18,7 +18,7 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
 
 ## Repositórios e máquinas
 
-- `origin`: <https://github.com/jpcerchiari/Aegis> (privado), desde 2026-11-09.
+- `origin`: <https://github.com/jpcerchiari/Aegis> (público), desde 2026-11-09.
 - `templum-antigo`: <https://github.com/jpcerchiari/Templum> (privado), onde o fork começou, com o
   PR #2 aberto. Fica como cópia antiga; arquivar ou apagar é decisão do usuário.
 - `upstream`: <https://github.com/KingDasWinx/Templum> (MIT). Ponto de partida: `development` em
@@ -44,7 +44,8 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
 - **A documentação do fork fica em `docs/fork/`.** A regra de preferir arquivo novo a editar arquivo do
   autor, para os merges doerem menos, caiu com a decisão 11: não há mais merge.
 - **Antes de um build grande, medir o espaço livre.** Um build de dev passou de 7,3 GB sem terminar.
-- **Só o `fork.yml` roda no GitHub**, e ele não compila (decisão 6). Os workflows de CI e de release do
+- **No GitHub rodam só os nossos workflows:** o `ci.yml` em todo PR e em todo push no `main` (decisão 27) e o
+  `release.yml` numa tag `v*` (decisão 25). Os workflows de CI e de release do
   Templum, o `dependabot.yml`, os rulesets e os scripts de release (`install.sh`, `install.ps1`,
   `publish.sh`) foram apagados na troca de nome.
 - **Novidades do autor entram à mão** (decisão 11, que substituiu a 8): `git fetch upstream`, ler o que
@@ -61,7 +62,7 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
 | 3 | Build: compilação cruzada a partir do WSL com `cargo-xwin` | Na máquina do trabalho não havia permissão de administrador para instalar o VS Build Tools | Superada pela troca de máquina. No PC pessoal, compilar nativo no Windows (confirmar na primeira sessão) |
 | 4 | Toolchain MSVC | Gera o mesmo binário que o autor compila e testa | Vale. No PC pessoal, a licença do Visual Studio Community cobre uso individual |
 | 5 | Onde compilar com o C: da máquina do trabalho cheio | | Deixou de valer com a troca de máquina |
-| 6 | CI próprio em `.github/workflows/fork.yml`, só com formatação (`cargo fmt`) e licenças (`cargo deny`), no Linux, em todo PR. Build, clippy, testes e executáveis rodam na máquina do usuário, nos três sistemas. Os workflows do autor (`CI` e `Release`) ficam desligados nas configurações do GitHub, sem editar os arquivos dele | Um arquivo novo não dá conflito nos merges. A primeira versão compilava e testava nos três sistemas a cada push num PR e gastou uns 330 dos 2000 minutos do mês numa execução só, sem passar: ver [Achados do primeiro CI](#achados-do-primeiro-ci-2026-11-09) | Vale desde 2026-11-09 |
+| 6 | CI próprio em `.github/workflows/fork.yml`, só com formatação (`cargo fmt`) e licenças (`cargo deny`), no Linux, em todo PR. Build, clippy, testes e executáveis rodam na máquina do usuário, nos três sistemas. Os workflows do autor (`CI` e `Release`) ficam desligados nas configurações do GitHub, sem editar os arquivos dele | Um arquivo novo não dá conflito nos merges. A primeira versão compilava e testava nos três sistemas a cada push num PR e gastou uns 330 dos 2000 minutos do mês numa execução só, sem passar: ver [Achados do primeiro CI](#achados-do-primeiro-ci-2026-11-09) | Substituída pela 27 em 2026-11-09 |
 | 7 | Todo build do fork se trata como compilado do fonte (`Install::Manual(Why::Source)`), onde quer que esteja: não procura versão sozinho e nunca se substitui. O *Check now* continua avisando quando sai versão do autor, com o link. A troca é na criação do workspace (`crates/aegis/src/workspace/mod.rs`); o `Install::detect` fica intacto, porque o autostart (`crates/aegis/src/autostart.rs`) também usa, para saber qual executável abrir no login | O atualizador baixa os releases do **autor** (`REPO` em `crates/aegis-update/src/lib.rs:17`). Um build copiado para fora do `target/` (outra pasta no Windows, um `.app` em `/Applications`, um binário fora de `/usr` no Linux) seria trocado pela versão do autor no reinício. O fork não publica releases (decisão 6), então apontar para ele não serve. As novidades do autor chegam pelo merge do `upstream` | Revertida em 2026-11-09 pela decisão 23: o atualizador passou a usar os releases do próprio Aegis. Volta o comportamento original: só o build de dentro de `target/` não se atualiza |
 | 8 | As novidades do autor entram por merge do `upstream/development` no `dev_joao`, sem rebase. O passo a passo está em [Regras do fork](#regras-do-fork) | O `dev_joao` já está no GitHub, com PR aberto contra o `main`. O rebase reescreveria commits enviados e exigiria `git push --force` a cada atualização. O fork mexe em poucos arquivos do autor, então os conflitos devem ser pequenos e aparecem uma vez só, no merge | Substituída em 2026-11-09 pela decisão 11: com a troca completa de nome, as novidades do autor entram à mão |
 | 9 | WSL em duas etapas. Primeiro PR: as três primeiras linhas da tabela de [Ponto de partida: WSL](#ponto-de-partida-wsl) (o agente recebe servidor, hooks, status line e medidor; o Templum vê o agente; `spawn_agent` aceita). Segundo PR: Stop e contas | As três primeiras dependem umas das outras e já formam o uso do dia a dia. Stop e contas são independentes. Com build e testes só na máquina do usuário (decisão 6), PR menor é mais fácil de conferir | Vale desde 2026-11-09. A implementação fica para o PC pessoal: o código é só de Windows e precisa de um WSL de verdade para testar |
@@ -80,7 +81,9 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
 | 22 | Fora do README, **sai o que não é código**: o `CHANGELOG.md` começa no Aegis, o link do branch `spike/gpui` sai do `docs/adr/0002-ui-framework.md`, e saem de `docs/minors.md` as 5 entradas sobre arquivos apagados (instaladores, release, assinatura de downloads). **Ficam:** o `LICENSE` (exigência da MIT), este documento (as decisões não fazem sentido sem a origem) e o autor no `authors` do `Cargo.toml`, por cortesia. O atualizador **fica**, apontado para os releases do Aegis (decisão 23) | Pedido do usuário | Vale desde 2026-11-09 |
 | 23 | O atualizador busca as versões novas nos **releases do próprio `jpcerchiari/Aegis`**, que passa a ser **público** (a troca de visibilidade é do usuário). Sem token: o link comum de download funciona em repositório público. `REPO` em `crates/aegis-update/src/lib.rs`, a fixture e os testes apontam para `jpcerchiari/Aegis`; a decisão 7 foi revertida (`Install::detect()` de volta) | O usuário quer um atualizador próprio, independente do Templum. Reaproveita o atualizador inteiro em vez de removê-lo. Falta o processo de release: sem release publicado, o *Check now* não acha nada | Vale desde 2026-11-09. Feito sem compilar |
 | 24 | Antes de o repositório ficar público, este documento deixou de citar o empregador do usuário, o caminho e o usuário na máquina do trabalho e o gerenciador de tarefas de lá. O repositório é recriado do zero, para nenhum commit antigo ficar acessível pelo hash | O repositório público é lido por qualquer pessoa. Depois de um force push, o GitHub ainda serve por um tempo um commit antigo a quem tiver o hash, então recriar é o único jeito de garantir | Vale desde 2026-11-09 |
-| 25 | Os **releases são compilados no GitHub Actions**, pelo nosso `.github/workflows/release.yml`, quando uma tag `vX.Y.Z` é enviada: cinco alvos (macOS Apple Silicon e Intel, Linux x86_64 e ARM, Windows x86_64), com os arquivos que o atualizador baixa, um `.sha256` ao lado de cada um e as notas tiradas da seção da versão no `CHANGELOG.md`. O disparo manual é um ensaio, sem release. A decisão 6 continua valendo para o CI de PR (só formatação e licenças) | Repositório público: o Actions é de graça e usa máquinas de 4 núcleos, então o motivo da decisão 6 não vale para os releases. Sai igual toda vez e não exige estar nos três computadores | Vale desde 2026-11-09. Escrito a partir do workflow do autor, sem rodar ainda |
+| 25 | Os **releases são compilados no GitHub Actions**, pelo nosso `.github/workflows/release.yml`, quando uma tag `vX.Y.Z` é enviada: cinco alvos (macOS Apple Silicon e Intel, Linux x86_64 e ARM, Windows x86_64), com os arquivos que o atualizador baixa, um `.sha256` ao lado de cada um e as notas tiradas da seção da versão no `CHANGELOG.md`. O disparo manual é um ensaio, sem release. O CI de PR é outra decisão: a 6, depois a 27 | Repositório público: o Actions é de graça e usa máquinas de 4 núcleos, então o motivo da decisão 6 não vale para os releases. Sai igual toda vez e não exige estar nos três computadores | Vale desde 2026-11-09. Escrito a partir do workflow do autor, sem rodar ainda |
+| 26 | O Aegis começa a própria numeração: o primeiro release é o **`v0.1.0`**. `[workspace.package] version` em `0.1.0`, o `Cargo.lock` atualizado só nas 9 entradas do Aegis, e o `CHANGELOG.md` com a seção `## 0.1.0` | Coerente com o Aegis independente. Nada dependia da numeração do Templum: a pasta de dados e a identidade do app já são outras, e os testes usam versões escritas à mão | Vale desde 2026-11-09 |
+| 27 | O CI de PR volta a **compilar e testar nos três sistemas**: `.github/workflows/ci.yml` (o antigo `fork.yml`, renomeado) roda em todo PR e em todo push no `main`. Formatação e licenças no Linux; build, clippy com `-D warnings` e testes no Windows, no macOS e no Linux. Os testes rodam pelo `cargo nextest` com `--retries 2`, que repete o que falhou e marca como FLAKY sem reprovar; os doctests, que o nextest não roda, pelo `cargo test --doc`. O cache só é salvo no `main`, com `cache-on-failure` | O motivo da decisão 6 (minutos do plano, máquinas de 2 núcleos) deixou de valer com o repositório público. O `--retries 2` responde aos testes do autor que falham ao acaso (ver [Achados do primeiro CI](#achados-do-primeiro-ci-2026-11-09)). PR só usa o cache dele mesmo e o do `main`, e cache de PR gastaria a cota de 10 GB do repositório | Vale desde 2026-11-09. Escrito a partir do CI do autor, sem rodar ainda |
 
 ## Feito
 
@@ -99,6 +102,8 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
   com a linha de base no PC pessoal. Testes que dependem do tamanho ou da ordem alfabética do nome
   ("Templum" tinha 7 letras, "Aegis" tem 5) podem falhar.
 - **Atualizador apontado para os releases do Aegis** (decisão 23), sem compilar.
+- **Workflows do Actions:** `release.yml` (decisão 25) e `ci.yml` (decisão 27), escritos a partir dos do
+  autor e ainda não rodados.
 
 ## Ponto de partida: WSL
 
@@ -228,10 +233,10 @@ Só a ideia; nada de código (BUSL-1.1).
    - **para o WSL (decisão 9):** uma distribuição instalada, com o Claude Code dentro dela.
 2. **Linha de base antes de mudar qualquer coisa:** `cargo run -p aegis` abre o app, e
    `cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
-   passa limpo. O GitHub não compila nem testa (decisão 6): isso fica na máquina, antes de cada PR,
-   em cada sistema que a mudança toca. Os testes do autor falham ao acaso (ver
+   passa limpo. Depois disso, o CI compila e testa cada PR nos três sistemas (decisão 27); na máquina,
+   basta o sistema em que se está mexendo. Os testes do autor falham ao acaso (ver
    [Achados do primeiro CI](#achados-do-primeiro-ci-2026-11-09)); se incomodar,
-   `cargo nextest run --workspace --retries 2` repete só o que falhou.
+   `cargo nextest run --workspace --retries 2` repete só o que falhou, como o CI faz.
 3. **Publicar um release** (decisão 25):
    1. em `Cargo.toml`, `[workspace.package]`, mudar `version`; depois `cargo update --workspace`, que
       só atualiza as entradas do próprio Aegis no `Cargo.lock`;
@@ -258,9 +263,10 @@ Só importam se a compilação cruzada voltar a ser usada.
 
 ## Achados do primeiro CI (2026-11-09)
 
-Execução 42627312052, no PR #2, com a primeira versão do `fork.yml`, que compilava e testava nos três
+Execução 42627312052, no PR #2, com a primeira versão do `fork.yml` (hoje `ci.yml`), que compilava e testava nos três
 sistemas. O fork ainda não mudava código, então nada do que falhou veio dele. Depois dela, o CI ficou
-só com formatação e licenças (decisão 6).
+só com formatação e licenças (decisão 6), e voltou a compilar e testar quando o repositório ficou público
+(decisão 27).
 
 - **Os testes do autor falham ao acaso.** Olhei 3 execuções recentes do CI dele que falharam. Em cada
   sistema que falhou, foi um teste só, e sempre um diferente. São testes que esperam um processo ou
