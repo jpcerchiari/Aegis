@@ -80,6 +80,7 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
 | 22 | Fora do README, **sai o que não é código**: o `CHANGELOG.md` começa no Aegis, o link do branch `spike/gpui` sai do `docs/adr/0002-ui-framework.md`, e saem de `docs/minors.md` as 5 entradas sobre arquivos apagados (instaladores, release, assinatura de downloads). **Ficam:** o `LICENSE` (exigência da MIT), este documento (as decisões não fazem sentido sem a origem) e o autor no `authors` do `Cargo.toml`, por cortesia. O atualizador **fica**, apontado para os releases do Aegis (decisão 23) | Pedido do usuário | Vale desde 2026-11-09 |
 | 23 | O atualizador busca as versões novas nos **releases do próprio `jpcerchiari/Aegis`**, que passa a ser **público** (a troca de visibilidade é do usuário). Sem token: o link comum de download funciona em repositório público. `REPO` em `crates/aegis-update/src/lib.rs`, a fixture e os testes apontam para `jpcerchiari/Aegis`; a decisão 7 foi revertida (`Install::detect()` de volta) | O usuário quer um atualizador próprio, independente do Templum. Reaproveita o atualizador inteiro em vez de removê-lo. Falta o processo de release: sem release publicado, o *Check now* não acha nada | Vale desde 2026-11-09. Feito sem compilar |
 | 24 | Antes de o repositório ficar público, este documento deixou de citar o empregador do usuário, o caminho e o usuário na máquina do trabalho e o gerenciador de tarefas de lá. O repositório é recriado do zero, para nenhum commit antigo ficar acessível pelo hash | O repositório público é lido por qualquer pessoa. Depois de um force push, o GitHub ainda serve por um tempo um commit antigo a quem tiver o hash, então recriar é o único jeito de garantir | Vale desde 2026-11-09 |
+| 25 | Os **releases são compilados no GitHub Actions**, pelo nosso `.github/workflows/release.yml`, quando uma tag `vX.Y.Z` é enviada: cinco alvos (macOS Apple Silicon e Intel, Linux x86_64 e ARM, Windows x86_64), com os arquivos que o atualizador baixa, um `.sha256` ao lado de cada um e as notas tiradas da seção da versão no `CHANGELOG.md`. O disparo manual é um ensaio, sem release. A decisão 6 continua valendo para o CI de PR (só formatação e licenças) | Repositório público: o Actions é de graça e usa máquinas de 4 núcleos, então o motivo da decisão 6 não vale para os releases. Sai igual toda vez e não exige estar nos três computadores | Vale desde 2026-11-09. Escrito a partir do workflow do autor, sem rodar ainda |
 
 ## Feito
 
@@ -231,7 +232,12 @@ Só a ideia; nada de código (BUSL-1.1).
    em cada sistema que a mudança toca. Os testes do autor falham ao acaso (ver
    [Achados do primeiro CI](#achados-do-primeiro-ci-2026-11-09)); se incomodar,
    `cargo nextest run --workspace --retries 2` repete só o que falhou.
-3. **Definir o processo de release** (decisão 23), depois **implementar na ordem da decisão 18**, começando pelo WSL. As decisões de arquitetura estão
+3. **Publicar um release** (decisão 25):
+   1. em `Cargo.toml`, `[workspace.package]`, mudar `version`; depois `cargo update --workspace`, que
+      só atualiza as entradas do próprio Aegis no `Cargo.lock`;
+   2. no `CHANGELOG.md`, trocar `## Unreleased` por `## X.Y.Z`;
+   3. commit, `git tag vX.Y.Z` e `git push origin main vX.Y.Z`. O Actions compila e publica.
+4. **Implementar na ordem da decisão 18**, começando pelo WSL. As decisões de arquitetura estão
    fechadas (1 a 20). Dúvidas que aparecerem no caminho seguem o grill-me: uma pergunta por vez,
    registrada aqui.
 

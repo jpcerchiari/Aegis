@@ -40,8 +40,19 @@ each other and to the boards and notes they work from.
 
 ## Install
 
-Aegis is built from source. With [rustup](https://rustup.rs) and the prerequisites in
-[CONTRIBUTING.md](CONTRIBUTING.md#setup):
+Download the file for your system from the [latest release](https://github.com/jpcerchiari/Aegis/releases/latest):
+the installer (`-setup.exe` or `.msi`) or the bare `.exe` on Windows, the `.dmg` on macOS (Apple Silicon or Intel),
+the `.AppImage`, `.deb` or `.tar.gz` on Linux. From then on, Aegis updates itself.
+
+The builds aren't signed by an Apple or Microsoft account, so a downloaded file asks once:
+
+- **macOS:** open Aegis, choose *Done* when macOS says it can't verify it, then *System Settings ▸ Privacy &
+  Security ▸ Open Anyway*. Or run `xattr -dr com.apple.quarantine /Applications/Aegis.app`.
+- **Windows:** on the SmartScreen prompt, *More info ▸ Run anyway*.
+
+### From source
+
+With [rustup](https://rustup.rs) and the prerequisites in [CONTRIBUTING.md](CONTRIBUTING.md#setup):
 
 ```sh
 git clone https://github.com/jpcerchiari/Aegis && cd Aegis && cargo run -p aegis

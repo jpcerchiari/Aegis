@@ -1,10 +1,8 @@
 name: Fork
 
-# CI do Aegis (docs/fork/README.md, decisão 6). É o único workflow: nada compila no GitHub.
-#
-# Só o que não compila: formatação e licenças, no Linux, em todo PR. Build, clippy, testes e
-# executáveis rodam na máquina do usuário. Em repositório privado o runner tem 2 núcleos e os minutos
-# são contados: a primeira execução completa, nos três sistemas, gastou uns 330 dos 2000 do mês.
+# CI do Aegis (docs/fork/README.md, decisão 6): formatação e licenças, no Linux, em todo PR. Build,
+# clippy e testes rodam na máquina do usuário. Os releases são compilados pelo release.yml, numa tag
+# `v*` (decisão 25).
 on:
   pull_request:
 
