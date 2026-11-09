@@ -150,6 +150,50 @@ fn https_serves_with_aegiss_certificate() {
 }
 
 #[test]
+fn the_mobile_shell_is_public_only_over_tls_and_the_api_still_needs_a_token() {
+    let secured = fake_with(own(), vec![], |_| {});
+    let get = |path| secured.call(req("GET", path).agent(https_unverified()));
+    let page = get("/mobile/");
+    assert_eq!(page.status, 200);
+    assert_eq!(
+        page.header("content-type"),
+        Some("text/html; charset=utf-8")
+    );
+    assert_eq!(page.header("cache-control"), Some("no-store"));
+    let policy = page.header("content-security-policy").unwrap();
+    assert!(policy.contains("script-src 'self'") && policy.contains("frame-ancestors 'none'"));
+    assert!(page.text.contains("app.webmanifest") && page.text.contains("app.js"));
+    let manifest = get("/mobile/app.webmanifest");
+    assert_eq!(manifest.json["start_url"], "/mobile/");
+    assert_eq!(manifest.json["display"], "standalone");
+    for icon in manifest.json["icons"].as_array().unwrap() {
+        let path = icon["src"].as_str().unwrap().to_string();
+        let answer = secured.call(req("GET", &path).agent(https_unverified()));
+        assert_eq!(answer.status, 200);
+        assert_eq!(answer.header("content-type"), Some("image/png"));
+    }
+    for (path, mime) in [
+        ("/mobile/app.js", "text/javascript; charset=utf-8"),
+        ("/mobile/app.css", "text/css; charset=utf-8"),
+    ] {
+        let answer = get(path);
+        assert_eq!(answer.status, 200);
+        assert_eq!(answer.header("content-type"), Some(mime));
+    }
+    assert_eq!(get("/mobile/unknown").status, 401);
+    assert_eq!(get("/v1/events").status, 401);
+    assert_eq!(
+        secured
+            .call(req("POST", "/mobile/").agent(https_unverified()))
+            .status,
+        401
+    );
+
+    let plain = fake(vec![], |_| {});
+    assert_eq!(plain.call(req("GET", "/mobile/")).status, 401);
+}
+
+#[test]
 fn the_served_certificate_is_the_fingerprint_shown() {
     let fake = fake_with(own(), vec![], |_| {});
     let shown = tls::fingerprint(&tls::own(fake.dir.path()).unwrap().chain[0]);
