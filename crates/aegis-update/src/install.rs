@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn linux_installations() {
         let appimage = PathBuf::from("/home/ada/Apps/aegis.AppImage");
-        let mounted = PathBuf::from("/tmp/.mount_templuX");
+        let mounted = PathBuf::from("/tmp/.mount_aegisX");
         assert_eq!(
             detect_in(
                 "linux",

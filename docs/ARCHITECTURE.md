@@ -391,8 +391,8 @@ Commits since the last release, and pushes a `vX.Y.Z` tag. The tag runs `.github
 built by [`cargo-packager`](https://github.com/crabnebula-dev/cargo-packager) (`.dmg` for macOS on Apple Silicon and
 Intel; NSIS `.exe` and `.msi` for Windows x64; `.deb` and AppImage for Linux x86_64 and ARM64, plus pacman on x86_64),
 the bare executables (`.tar.gz` on Linux, `.exe` on Windows), a `.sha256` for each file, and a GitHub Release whose
-notes are the CHANGELOG section (a `-rc.N` tag is a prerelease). The app's icon lives in `crates/aegis/icons/`:
-PNGs for Linux (16 to 48 px are the logo drawn for small sizes), `aegis.icns` for macOS, and `aegis.ico`, which
+notes are the CHANGELOG section (a `-rc.N` tag is a prerelease). The app's icon lives in `crates/aegis/icons/`,
+drawn in `icon.svg` and, for 16 to 48 px, in `icon-small.svg`: PNGs for Linux, `aegis.icns` for macOS, and `aegis.ico`, which
 the `.msi` and the NSIS installer show and `build.rs` embeds in `aegis.exe` (Explorer, the taskbar, its shortcuts and
 its title bar take it from there). The macOS app carries an ad-hoc signature (no Apple account:
 `signing-identity = "-"`), checked after packaging, so a downloaded one opens after *Open Anyway* in Privacy &

@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img"><title>Aegis</title><defs>
+<linearGradient id="bg" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5A44A6"/><stop offset=".5" stop-color="#2C2155"/><stop offset="1" stop-color="#130E26"/></linearGradient>
+<radialGradient id="lamp" cx="512" cy="330" r="520" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#B9A2FF" stop-opacity="0.35"/><stop offset="1" stop-color="#B9A2FF" stop-opacity="0"/></radialGradient>
+<radialGradient id="aura" cx="512" cy="520" r="420" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#FFD66E" stop-opacity=".38"/><stop offset=".6" stop-color="#FFB940" stop-opacity=".10"/>
+  <stop offset="1" stop-color="#FFB940" stop-opacity="0"/></radialGradient>
+<linearGradient id="faceL" x1="330" y1="200" x2="500" y2="860" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#FFFFFF"/><stop offset=".45" stop-color="#E9EDF3"/><stop offset="1" stop-color="#C5CCD8"/></linearGradient>
+<linearGradient id="faceR" x1="520" y1="200" x2="740" y2="860" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#CDD3DE"/><stop offset=".5" stop-color="#A2AABA"/><stop offset="1" stop-color="#7A8295"/></linearGradient>
+<linearGradient id="frame" x1="0" y1="168" x2="0" y2="872" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#E9C987"/><stop offset=".5" stop-color="#B88A48"/><stop offset="1" stop-color="#7C5428"/></linearGradient>
+<linearGradient id="thick" x1="0" y1="168" x2="0" y2="890" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#6E4A22"/><stop offset="1" stop-color="#3A2510"/></linearGradient>
+<linearGradient id="gold" x1="0" y1="168" x2="0" y2="300" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#FFF4CF"/><stop offset=".4" stop-color="#F6D27C"/><stop offset="1" stop-color="#C98E36"/></linearGradient>
+<linearGradient id="goldRim" x1="276" y1="0" x2="748" y2="0" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#FFE8A6"/><stop offset=".48" stop-color="#F0C064"/><stop offset=".52" stop-color="#D49A44"/>
+  <stop offset="1" stop-color="#9C6A2C"/></linearGradient>
+<linearGradient id="ringG" x1="460" y1="552" x2="564" y2="656" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#FFF1C4"/><stop offset=".45" stop-color="#F0C062"/><stop offset="1" stop-color="#A06C2A"/></linearGradient>
+<linearGradient id="pinG" x1="498" y1="0" x2="526" y2="0" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#FFEBB0"/><stop offset=".5" stop-color="#E7B456"/><stop offset="1" stop-color="#A87430"/></linearGradient>
+<linearGradient id="shellG" x1="0" y1="138" x2="0" y2="910" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#FFF3C4" stop-opacity="1"/><stop offset=".55" stop-color="#FFD15C" stop-opacity=".85"/>
+  <stop offset="1" stop-color="#FFB13B" stop-opacity=".15"/></linearGradient>
+<filter id="blur" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="12"/></filter>
+<filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="22"/></filter>
+<filter id="tileShadow" x="-15%" y="-15%" width="130%" height="135%" color-interpolation-filters="sRGB">
+  <feGaussianBlur in="SourceAlpha" stdDeviation="18"/><feOffset dy="16"/><feFlood flood-color="#000" flood-opacity=".35"/>
+  <feComposite operator="in" in2="SourceAlpha"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<clipPath id="tileClip"><path d="M382.8 100H641.2C722.63 100 763.34 100 807.17 113.86C855.03 131.28 892.72 168.97 910.14 216.83C924 260.66 924 301.37 924 382.8V641.2C924 722.63 924 763.34 910.14 807.17C892.72 855.03 855.03 892.72 807.17 910.14C763.34 924 722.63 924 641.2 924H382.8C301.37 924 260.66 924 216.83 910.14C168.97 892.72 131.28 855.03 113.86 807.17C100 763.34 100 722.63 100 641.2V382.8C100 301.37 100 260.66 113.86 216.83C131.28 168.97 168.97 131.28 216.83 113.86C260.66 100 301.37 100 382.8 100Z"/></clipPath>
+<clipPath id="faceClip"><path d="M512.0 190.0L688.0 284.0L744.0 478.0L710.0 512.0L726.0 562.0L512.0 850.0L298.0 562.0L314.0 512.0L280.0 478.0L336.0 284.0Z"/></clipPath>
+</defs><g transform="translate(-41 -41) scale(1.08)">
+<path d="M382.8 100H641.2C722.63 100 763.34 100 807.17 113.86C855.03 131.28 892.72 168.97 910.14 216.83C924 260.66 924 301.37 924 382.8V641.2C924 722.63 924 763.34 910.14 807.17C892.72 855.03 855.03 892.72 807.17 910.14C763.34 924 722.63 924 641.2 924H382.8C301.37 924 260.66 924 216.83 910.14C168.97 892.72 131.28 855.03 113.86 807.17C100 763.34 100 722.63 100 641.2V382.8C100 301.37 100 260.66 113.86 216.83C131.28 168.97 168.97 131.28 216.83 113.86C260.66 100 301.37 100 382.8 100Z" fill="url(#bg)" filter="url(#tileShadow)"/>
+<g clip-path="url(#tileClip)">
+  <path d="M382.8 100H641.2C722.63 100 763.34 100 807.17 113.86C855.03 131.28 892.72 168.97 910.14 216.83C924 260.66 924 301.37 924 382.8V641.2C924 722.63 924 763.34 910.14 807.17C892.72 855.03 855.03 892.72 807.17 910.14C763.34 924 722.63 924 641.2 924H382.8C301.37 924 260.66 924 216.83 910.14C168.97 892.72 131.28 855.03 113.86 807.17C100 763.34 100 722.63 100 641.2V382.8C100 301.37 100 260.66 113.86 216.83C131.28 168.97 168.97 131.28 216.83 113.86C260.66 100 301.37 100 382.8 100Z" fill="url(#lamp)"/>
+  <g transform="translate(512 528) scale(0.88) translate(-512 -520)">
+  <!-- contact shadow and the gold aura under it -->
+  <ellipse cx="512" cy="905" rx="200" ry="34" fill="#000" opacity="0.45" filter="url(#soft)"/>
+  <circle cx="512" cy="520" r="420" fill="url(#aura)"/>
+  <!-- the barrier: a shell of light around the shield -->
+  <path d="M512.0 134.0L724.9 247.3L800.2 486.9L765.1 520.1L781.9 564.9L512.0 921.7L242.1 564.9L258.9 520.1L223.8 486.9L299.1 247.3Z" fill="none" stroke="#FFC94D" stroke-opacity=".55" stroke-width="26" stroke-linejoin="round" filter="url(#blur)"/>
+  <path d="M512.0 134.0L724.9 247.3L800.2 486.9L765.1 520.1L781.9 564.9L512.0 921.7L242.1 564.9L258.9 520.1L223.8 486.9L299.1 247.3Z" fill="none" stroke="url(#shellG)" stroke-width="10" stroke-linejoin="round"/>
+  <!-- metal: thickness, frame, face -->
+  <path d="M512.0 168.0L700.0 268.0L766.0 478.0L730.0 512.0L748.0 560.0L512.0 872.0L276.0 560.0L294.0 512.0L258.0 478.0L324.0 268.0Z" transform="translate(0 16)" fill="url(#thick)"/>
+  <path d="M512.0 168.0L700.0 268.0L766.0 478.0L730.0 512.0L748.0 560.0L512.0 872.0L276.0 560.0L294.0 512.0L258.0 478.0L324.0 268.0Z" fill="url(#frame)"/>
+  <path d="M512.0 190.0L336.0 284.0L280.0 478.0L314.0 512.0L298.0 562.0L512.0 850.0Z" fill="url(#faceL)"/>
+  <path d="M512.0 190.0L688.0 284.0L744.0 478.0L710.0 512.0L726.0 562.0L512.0 850.0Z" fill="url(#faceR)"/>
+  <g clip-path="url(#faceClip)">
+    <ellipse cx="392" cy="360" rx="150" ry="250" fill="#FFFFFF" opacity=".4"/>
+    
+    <path d="M300 520L512 850L724 520" fill="none" stroke="#000" stroke-opacity=".10" stroke-width="40" filter="url(#blur)"/>
+  </g>
+  <path d="M509 214V808" stroke="#FFFFFF" stroke-opacity=".95" stroke-width="5"/>
+  <path d="M515 214V808" stroke="#3E4554" stroke-opacity=".35" stroke-width="6"/>
+  <!-- gold cap and rim, each with its underside -->
+  <path d="M512.0 168.0L712.0 262.0L724.0 286.0L700.0 300.0L512.0 214.0L324.0 300.0L300.0 286.0L312.0 262.0Z" transform="translate(0 10)" fill="#7A5020"/>
+  <path d="M512.0 168.0L712.0 262.0L724.0 286.0L700.0 300.0L512.0 214.0L324.0 300.0L300.0 286.0L312.0 262.0Z" fill="url(#gold)"/>
+  <path d="M316 270L512 180L708 270" fill="none" stroke="#FFFBEA" stroke-opacity=".9" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M748.0 560.0L512.0 874.0L276.0 560.0L312.8 532.4L512.0 797.3L711.2 532.4Z" transform="translate(0 10)" fill="#6E4618"/>
+  <path d="M748.0 560.0L512.0 874.0L276.0 560.0L312.8 532.4L512.0 797.3L711.2 532.4Z" fill="url(#goldRim)"/>
+  <path d="M290 566L512 862" fill="none" stroke="#FFF6D6" stroke-opacity=".85" stroke-width="5" stroke-linecap="round"/>
+  <!-- the ring on its pin -->
+  <rect x="500.0" y="412" width="30" height="152" rx="15.0" fill="#000" opacity=".25"/>
+  <rect x="497.0" y="404" width="30" height="156" rx="15.0" fill="url(#pinG)"/>
+  <rect x="509" y="420" width="6" height="132" rx="3" fill="#8E2C22" opacity=".8"/>
+  <circle cx="514" cy="612" r="48" fill="none" stroke="#000" stroke-opacity=".28" stroke-width="30"/>
+  <circle cx="512" cy="604" r="48" fill="none" stroke="url(#ringG)" stroke-width="30"/>
+  <path d="M476.0 574.2A48 48 0 0 1 526.4 558.4" fill="none" stroke="#FFFBEA" stroke-opacity=".9" stroke-width="6" stroke-linecap="round"/>
+</g>
+</g>
+<path d="M382.8 100H641.2C722.63 100 763.34 100 807.17 113.86C855.03 131.28 892.72 168.97 910.14 216.83C924 260.66 924 301.37 924 382.8V641.2C924 722.63 924 763.34 910.14 807.17C892.72 855.03 855.03 892.72 807.17 910.14C763.34 924 722.63 924 641.2 924H382.8C301.37 924 260.66 924 216.83 910.14C168.97 892.72 131.28 855.03 113.86 807.17C100 763.34 100 722.63 100 641.2V382.8C100 301.37 100 260.66 113.86 216.83C131.28 168.97 168.97 131.28 216.83 113.86C260.66 100 301.37 100 382.8 100Z" fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="4"/></g></svg>
