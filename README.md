@@ -1,21 +1,28 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="crates/aegis/icons/icon-dark.svg">
-    <img src="crates/aegis/icons/icon.svg" width="128" height="128" alt="">
-  </picture>
+  <img src="crates/aegis/icons/icon.svg" width="160" height="160" alt="Aegis">
 </p>
 
 <h1 align="center">Aegis</h1>
 
 <p align="center">
-  <b>An infinite canvas for your terminals and your AI coding agents.</b><br>
-  <a href="#install">Install</a> · <a href="#quick-start">Quick start</a> · <a href="docs/guide.md">Guide</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <i>“Healing past full grants you a temporary barrier.”</i><br>
+  <sub>— Aegis, <i>Risk of Rain 2</i></sub>
 </p>
 
-Aegis puts every terminal on one canvas you pan and zoom, like a whiteboard: place them anywhere, resize them,
-group them by project. It is made for working with CLI agents such as Claude Code and Codex, side by side, wired to
-each other and to the boards and notes they work from.
+<p align="center">
+  <b>A cockpit for your terminals and AI coding agents, on one infinite canvas.</b><br>
+  <a href="#install">Install</a> · <a href="#quick-start">Quick start</a> · <a href="#roadmap">Roadmap</a> ·
+  <a href="docs/guide.md">Guide</a>
+</p>
+
+Aegis is a native desktop app for AI coding agents that run for hours: Claude Code, Codex, Gemini CLI and the rest,
+each in its own terminal, all on one canvas you pan and zoom like a whiteboard. You see at a glance which agents are
+working and which are waiting for you, wire them to each other and to the boards they work from, and keep your plan
+limits in sight while they run.
+
+It is built around one setup: the agents run on your own machine, Windows with WSL included, and you follow them from
+your desk or from your phone, with nothing in between. Most of that works today; full WSL support and the phone app
+are next on the [roadmap](#roadmap).
 
 ## What it does
 
@@ -37,6 +44,19 @@ each other and to the boards and notes they work from.
   Claude Code, Codex and most other agents on their latest conversation.
 - **Native and light.** Rust drawn on the GPU, no webview or Electron. macOS, Linux (Wayland and X11) and Windows.
   It follows your light or dark mode and takes any Alacritty theme.
+
+## Roadmap
+
+In this order:
+
+1. **Agents in WSL, like anywhere else.** An agent running in WSL gets what one in PowerShell gets: the status dot,
+   the hooks, the tools that drive the canvas and the limits meter.
+2. **Aegis on your phone.** A web app served by Aegis itself, over your local network or Tailscale: your agents with
+   their status, and each terminal live, to read and type into. You pair it by scanning two QR codes, and Aegis is its
+   own certificate authority, so no third-party server sits between the phone and your machine. Android and iPhone.
+3. **Keep the computer awake** while an agent works, so the phone doesn't lose it.
+4. **A command palette.**
+5. Later, sessions that survive closing the app.
 
 ## Install
 
@@ -99,3 +119,6 @@ Security issues: see [SECURITY.md](SECURITY.md).
 ## License
 
 [MIT](LICENSE). You may use, modify and sell Aegis, as long as the copyright notice is kept.
+
+The name, the line under the title and the idea behind the icon come from the Aegis, an item in *Risk of Rain 2* by
+Hopoo Games. This project isn't affiliated with the game or its makers.

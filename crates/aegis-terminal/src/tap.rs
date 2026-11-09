@@ -877,8 +877,10 @@ mod tests {
             b"\x1b]133;A\x07\x1b]0;~\x1b\\\x1b[?2004h\x1b]133;A;click_events=1\x1b\\$ false\r\n\
               \x1b]133;C;cmdline_url=false\x1b\\\x1b]133;C\x07\x1b]133;D;1\x1b\\\x1b]133;D;1\x07",
         ]);
+        // The link that opens a mark, built from the URI so it follows the app's name.
+        let open = [b"\x1b]8;;".as_slice(), URI.as_bytes()].concat();
         assert_eq!(
-            out.windows(7).filter(|w| w == b"\x1b]8;;te").count(),
+            out.windows(open.len()).filter(|w| **w == *open).count(),
             1,
             "one mark"
         );
