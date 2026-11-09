@@ -1,4 +1,4 @@
-# Aegis, fork privado do Templum: estado do trabalho
+# Aegis, fork do Templum: estado do trabalho
 
 Atualizado em 2026-11-09. O Aegis é o Templum (MIT) com outro nome e as mudanças deste fork. Este
 arquivo reúne as decisões, o que já foi feito e o que falta. A memória do Claude Code fica na
@@ -105,8 +105,22 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
   um: `tap::tests::a_second_integrations_marks_are_the_same_prompts_and_command` procurava a marca pelo começo
   de `templum:` (`\x1b]8;;te`); agora monta o trecho a partir de `URI`.
 - **Atualizador apontado para os releases do Aegis** (decisão 23), sem compilar.
-- **Workflows do Actions:** `release.yml` (decisão 25) e `ci.yml` (decisão 27), escritos a partir dos do
-  autor e ainda não rodados.
+- **Workflows do Actions, commit `fd6564a`:** no [CI](https://github.com/jpcerchiari/Aegis/actions/runs/42680529502),
+  formatação, licenças, Windows e macOS passaram. O Linux compilou e passou no Clippy. Dos 3.442
+  testes Linux, `inspect_finds_an_agent_the_shell_started` falhou nas três tentativas e
+  `inspect_finds_an_agent_and_its_folder` passou na terceira. Os doctests de Linux ficaram pendentes.
+  O [ensaio de release](https://github.com/jpcerchiari/Aegis/actions/runs/42682578389) empacotou os cinco
+  alvos. A etapa de publicação ficou de fora porque o disparo foi manual.
+- **Linha de base local no Mac Apple Silicon:** Rust 1.99.0. Formatação, build do workspace
+  e Clippy com `-D warnings` passaram. O binário abriu, renderizou e fechou normalmente no
+  ensaio gráfico `--bench-zoom=empty`. A suíte completa teve três falhas. O teste de
+  permissões de `aegis-git` pegava o `ls` personalizado do shell de login. Após usar
+  `command ls` nesse teste, os 210 testes da crate passaram. Duas falhas se repetiram
+  isoladamente: `stop_agent_ends_what_an_agent_that_quit_left_running` e
+  `strays_are_the_program_what_it_left_in_a_session_of_its_own_and_never_the_shell`.
+  Uma sondagem local confirmou que o `sysinfo` vê os argumentos de `/bin/sh` e `/bin/sleep`
+  mas recebe o ambiente vazio. Uma cópia de `sleep` no diretório temporário expõe a variável
+  `AEGIS_TERMINAL`. A busca por processos órfãos depende dessa variável.
 
 ## Ponto de partida: WSL
 
@@ -128,30 +142,79 @@ Arquivos que mais mencionam WSL: `aegis-terminal/src/integration.rs`, `workspace
 
 ### O que o primeiro PR mexe (decisão 9)
 
-Levantado em 2026-11-09, lendo o código, sem compilar.
+Levantamento no código do commit `fd6564a`. Os passos abaixo ainda precisam de um Windows com WSL.
 
-- **O agente recebe o que o Templum dá.** Tudo passa por `Workspace::gives`
-  (`crates/aegis/src/workspace/usage.rs:245`), que devolve `None` no WSL. Dele dependem
-  `typed_in` (as flags digitadas depois do comando do agente), `agent_env` (os `AEGIS_*_ARGS` para o
-  agente digitado à mão) e `server_vars` (OpenCode, Kilo Code e Qwen Code). Para o WSL, ele precisa:
-  - dos caminhos como `/mnt/c/…`, e das aspas do bash, não as do Windows (hoje é `cfg!(windows)`);
-  - do programa como `aegis.exe`, pelo interop: em `<data>/bin` só existe `aegis.exe`, e no Linux
-    o nome `aegis` não acha o `.exe`;
-  - do arquivo de configurações do Claude Code (status line e hooks) com esses caminhos; hoje ele é
-    gerado com caminhos do Windows.
-- **As variáveis atravessam pelo `WSLENV`.** `terminal_env` (`crates/aegis/src/workspace/bus.rs:112`)
-  dá `AEGIS_BUS` e o `PATH`; `agent_env` dá os `AEGIS_*_ARGS`. No bloco do WSL, os nomes entram no
-  `WSLENV`, somados ao que já houver nele. O `AEGIS_TERMINAL` atravessando também serve para achar
-  o agente (item abaixo).
-- **O Templum vê o agente.** `aegis_terminal::inspect` (`crates/aegis-terminal/src/terminal.rs:673`)
-  lê os processos do Windows pelo `sysinfo`, chamado por `Layout::snapshot`
-  (`crates/aegis/src/session.rs:936`), fora da thread da interface. Falta uma leitura dos processos
-  da distribuição, casando cada um com o bloco. Depois, `session_ids` procura a sessão do agente no
-  `~/.claude` do Windows, e o Claude Code do WSL guarda as dele no `~/.claude` do Linux: sem isso,
-  o agente não volta depois de reiniciar.
-- **`spawn_agent` aceita.** Tirar a recusa de `Workspace::spawn_problem` quando o item acima funcionar.
+1. **Transportar a configuração.** Em `Terminal::spawn`, somar ao `WSLENV` existente apenas as
+   variáveis usadas pelo bloco WSL, incluindo `AEGIS_BUS` e `AEGIS_TERMINAL`. Preservar o `PATH`
+   do Linux e acrescentar apenas a pasta da ponte se ela precisar estar no caminho. Confirmar o
+   transporte com `aegis.exe whoami` em um bloco, sem imprimir `AEGIS_BUS`, que contém o segredo
+   local no Windows. As duas variáveis precisam atravessar também na volta, do WSL para
+   `aegis.exe`. O executável acessa o loopback do próprio Windows via interop.
+   [Referência da Microsoft sobre WSLENV](https://learn.microsoft.com/en-us/windows/wsl/interop#wslenv-flags).
+2. **Gerar as configurações para o shell.** Em `workspace/usage.rs`, `Workspace::gives` alimenta
+   `typed_in`, `agent_env` e `server_vars`. Gravar os arquivos no host e usar `wslpath` da
+   distribuição padrão, fora da thread da interface, para os caminhos que o agente Linux lê.
+   Usar aspas de shell Unix. O relay `aegis.exe` roda no Windows, portanto o caminho do diretório
+   onde ele grava deve continuar sendo do Windows. Conferir também quem usa o nome simples
+   `aegis` (por exemplo, os hooks do Codex) e o lançamento digitado à mão. Hoje
+   `integration::inject` não instala as funções de shell no WSL, então passar os `AEGIS_*_ARGS`
+   sozinho não faz o comando digitado consumi-los.
+3. **Manter a identidade do agente e a sessão.** Pela decisão 10, começar pelos hooks. Hoje
+   `AgentEvent::Started` sinaliza que o agente está ocioso, mas não preenche `pane.seen`.
+   A mensagem que chega ao workspace já perdeu o tipo do agente, a pasta e o ID da sessão
+   do payload original. `Space::see` apaga o estado quando a inspeção do host não vê agente.
+   Levar esses dados junto com o evento no WSL, manter o estado entre snapshots e limpar no
+   fim da sessão. `Layout::snapshot` faz sua própria inspeção e `session_ids` olha os arquivos
+   do host. Conferir o caminho inteiro
+   até o salvamento e a retomada da mesma sessão. O relay de uso já é por terminal, mas
+   `Workspace::proc_of` exige PID e horário de início. Separar os dados vindos do relay dos
+   que dependem de um processo Windows real. O medidor de limites do Claude Code também
+   consulta `/usage` em `claude_poll_jobs`, que hoje procura o executável no Windows. Conferir
+   o medidor com Claude Code instalado somente na distribuição.
+4. **Liberar `spawn_agent` depois de confirmar prontidão.** `look_ready` exige um PID de agente,
+   tela estável e nenhum pedido de permissão reportado. O código registra que o `SessionStart`
+   do Codex pode depender do primeiro prompt. Exercitar esse caso no WSL antes de tirar a
+   recusa de `spawn_problem`.
+   Se o hook chegar tarde demais, investigar um sinal de prontidão da distribuição antes de
+   liberar o envio. O prompt nunca pode cair no shell ou responder à confirmação de confiança
+   do agente.
+
+**Verificação no Windows.** Usar a distribuição padrão e testar em uma pasta com espaços.
+Conferir uma variável própria que já constava no `WSLENV`, um bloco PowerShell como controle e
+dois blocos WSL para provar que o evento chega ao bloco certo. Usar a entrada nativa Claude
+Code com o shell WSL para testar as flags de `typed_in`. Abrir pelo canvas e digitar o comando
+em outro bloco. Conferir ferramentas MCP, status no canvas e em `GET /v1/events` após um
+snapshot, medidor de limites e retomada ao reabrir o Aegis. Ao sair do agente normalmente,
+conferir que o bloco volta a aparecer como terminal.
+Em `spawn_agent`, verificar que o prompt chega uma vez após a confirmação de confiança.
+Repetir com Codex antes de habilitá-lo por essa rota. Testar também uma falha de tradução
+ou interop desabilitado, sem travar a janela.
+Os testes automatizados existentes em `workspace/tests/agents.rs`, `bus.rs` e `spawn.rs` são
+os pontos de partida para cobrir os caminhos nativo e WSL.
 
 ## Ponto de partida: celular
+
+### Cliente móvel em teste
+
+O Aegis já serve o cliente em `/mobile/` quando a API está em HTTPS. Em **Settings ▸ API**,
+ative a API, use um certificado que o navegador confie para o endereço escolhido e crie um
+token. Abra `https://<endereço>:7411/mobile/` (ou a porta configurada) e cole o token.
+`Read` acompanha agentes e terminais. `Full` também permite colar texto, digitar caracteres
+e enviar teclas. O token fica na memória da página e precisa ser informado de novo após
+recarregar. A página e os ícones são públicos nesse endereço. A API continua exigindo o token
+e aplicando seu escopo e a lista de workspaces.
+
+O cliente usa a mesma origem para os eventos e a tela do terminal, sem bibliotecas externas.
+O ensaio em Chrome com viewport móvel verificou os critérios de instalação do manifesto,
+os escopos, mudanças no status do agente e nas linhas do terminal, envio de texto e teclas
+e revogação do token. A instalação em Android e iPhone ainda precisa ser testada.
+
+**Próximo passo do celular.** Implementar a autoridade certificadora e a renovação da folha
+para LAN e Tailscale (decisões 14 e 15). Depois, ligar o pareamento por dois QR e a troca de
+código de uso único à página (decisões 16 e 19). Até lá, a configuração de TLS e do token é
+manual.
+
+### API existente
 
 Metade do caminho já existe no Templum, sem servidor intermediário (`docs/api.md` e `docs/specs/api.md`):
 
@@ -226,20 +289,22 @@ Só a ideia; nada de código (BUSL-1.1).
 
 1. **Preparar o PC pessoal** (Windows):
    - `git clone https://github.com/jpcerchiari/Aegis`, depois
-     `git remote add upstream https://github.com/KingDasWinx/Templum` e `git switch dev_joao`;
+     `git remote add upstream https://github.com/KingDasWinx/Templum`. Partir do `main` atualizado.
    - instalar o rustup (<https://rustup.rs>); a versão do Rust fixada no `rust-toolchain.toml` se
      instala sozinha;
    - instalar o Visual Studio Build Tools com o workload *Desktop development with C++*, incluindo o
      Windows SDK: o build de release usa o `fxc.exe` dele para compilar os shaders;
    - **deixar folga no disco:** o build de dev passou de 7,3 GB sem terminar; reserve uns 30 GB (é
      uma estimativa);
-   - **para o WSL (decisão 9):** uma distribuição instalada, com o Claude Code dentro dela.
-2. **Linha de base antes de mudar qualquer coisa:** `cargo run -p aegis` abre o app, e
-   `cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
-   passa limpo. Depois disso, o CI compila e testa cada PR nos três sistemas (decisão 27); na máquina,
-   basta o sistema em que se está mexendo. Os testes do autor falham ao acaso (ver
-   [Achados do primeiro CI](#achados-do-primeiro-ci-2026-11-09)); se incomodar,
-   `cargo nextest run --workspace --retries 2` repete só o que falhou, como o CI faz.
+   - **para o WSL (decisão 9):** conferir a distribuição padrão com `wsl.exe --list --verbose` e
+     o Claude Code dentro dela com `wsl.exe --exec sh -lc "command -v claude"`.
+2. **Linha de base antes de mudar a integração no Windows:** abrir com `cargo run -p aegis -- --dev`
+   e executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`
+   e `cargo test --workspace --locked`. O CI já verifica as três plataformas (decisão 27).
+   Para isolar a falha vista no Linux em `fd6564a`, rodar
+   `cargo test -p aegis-terminal --locked --test spawn inspect_finds_an_agent_the_shell_started -- --exact --nocapture`.
+   Se falhar, capturar a saída do PTY e os PIDs do shell e do grupo de primeiro plano antes de
+   atribuir a falha ao timeout ou alterar a inspeção.
 3. **Publicar um release** (decisão 25):
    1. em `Cargo.toml`, `[workspace.package]`, mudar `version`; depois `cargo update --workspace`, que
       só atualiza as entradas do próprio Aegis no `Cargo.lock`;

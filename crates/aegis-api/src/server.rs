@@ -1081,6 +1081,21 @@ async fn handle(
     peer: Peer,
     request: Request<RequestBody>,
 ) -> Result<Response<Body>, Infallible> {
+    if shared.options.tls.is_some()
+        && request.method() == hyper::Method::GET
+        && let Some(page) = mobile_asset(request.uri().path())
+    {
+        let mut response = decorate(page, &shared, None, false);
+        response.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; \
+                 connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; \
+                 frame-ancestors 'none'",
+            ),
+        );
+        return Ok(response);
+    }
     let origin = request
         .headers()
         .get(header::ORIGIN)
@@ -1095,6 +1110,33 @@ async fn handle(
     }
     let response = route(&shared, peer, request).await;
     Ok(decorate(response, &shared, origin.as_deref(), false))
+}
+
+/// The mobile shell is public over TLS. Its data still goes through the authenticated API.
+fn mobile_asset(path: &str) -> Option<Response<Body>> {
+    let (mime, bytes): (&str, &'static [u8]) = match path {
+        "/mobile" | "/mobile/" => (
+            "text/html; charset=utf-8",
+            include_bytes!("mobile/index.html"),
+        ),
+        "/mobile/app.js" => (
+            "text/javascript; charset=utf-8",
+            include_bytes!("mobile/app.js"),
+        ),
+        "/mobile/app.css" => ("text/css; charset=utf-8", include_bytes!("mobile/app.css")),
+        "/mobile/app.webmanifest" => (
+            "application/manifest+json",
+            include_bytes!("mobile/app.webmanifest"),
+        ),
+        "/mobile/icon-256.png" => ("image/png", include_bytes!("../../aegis/icons/256x256.png")),
+        "/mobile/icon-512.png" => ("image/png", include_bytes!("../../aegis/icons/512x512.png")),
+        _ => return None,
+    };
+    let mut response = Response::new(full(Bytes::from_static(bytes)));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    Some(response)
 }
 
 /// The credentials a request shows: a bearer token, or (on the event stream only) a ticket.

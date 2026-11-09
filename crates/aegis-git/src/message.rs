@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn the_request_is_kept_where_only_this_user_can_read_it() {
         let dir = tempfile::tempdir().unwrap();
-        let line = "ls -ld \"$(dirname {prompt_file})\"; dirname {prompt_file}";
+        let line = "command ls -ld \"$(dirname {prompt_file})\"; dirname {prompt_file}";
         let answer = run(line, "m", "r", dir.path(), LONG, &never(), &[]).unwrap();
         let (listing, folder) = answer.trim().split_once('\n').unwrap();
         assert!(listing.starts_with("drwx------"), "{listing}");

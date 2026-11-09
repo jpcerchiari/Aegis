@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#201a32">
+    <title>Aegis Mobile</title>
+    <link rel="manifest" href="/mobile/app.webmanifest">
+    <link rel="apple-touch-icon" href="/mobile/icon-256.png">
+    <link rel="stylesheet" href="/mobile/app.css">
+    <script type="module" src="/mobile/app.js"></script>
+</head>
+<body>
+    <header>
+        <img src="/mobile/icon-256.png" alt="" width="36" height="36">
+        <h1>Aegis <span>Mobile</span></h1>
+        <button id="disconnect" type="button" hidden>Disconnect</button>
+    </header>
+    <main>
+        <p id="connection" class="status" role="status"></p>
+        <form id="connect">
+            <h2>Connect to this computer</h2>
+            <p>Create an API token in Aegis settings and paste it here. Use Read to watch or Full to type.</p>
+            <label for="token">API token</label>
+            <input id="token" type="password" required autocomplete="off" autocapitalize="none" spellcheck="false">
+            <button class="primary">Connect</button>
+        </form>
+
+        <section id="overview" hidden aria-labelledby="overview-title">
+            <h2 id="overview-title">Terminals</h2>
+            <p id="empty">Waiting for terminals…</p>
+            <ul id="terminals"></ul>
+        </section>
+
+        <section id="detail" hidden aria-labelledby="terminal-title">
+            <button id="back" type="button">← Terminals</button>
+            <h2 id="terminal-title" tabindex="-1"></h2>
+            <p id="terminal-status" class="status" role="status"></p>
+            <div class="screen" tabindex="0" role="region" aria-label="Live terminal screen">
+                <div id="display">
+                    <div id="rows"></div>
+                    <span id="cursor" aria-hidden="true" hidden></span>
+                </div>
+            </div>
+            <p id="read-only" hidden>This terminal is read-only.</p>
+            <form id="input" hidden>
+                <label for="text">Text to send</label>
+                <textarea id="text" rows="2" required autocapitalize="none" spellcheck="false"></textarea>
+                <div class="keys">
+                    <button class="primary" value="paste">Paste</button>
+                    <button value="type">Type characters</button>
+                </div>
+                <div class="keys" aria-label="Terminal keys">
+                    <button type="button" data-key="enter">Enter</button>
+                    <button type="button" data-key="escape">Esc</button>
+                    <button type="button" data-key="tab">Tab</button>
+                    <button type="button" data-key="ctrl+c">Ctrl+C</button>
+                    <button type="button" data-key="up" aria-label="Up arrow">↑</button>
+                    <button type="button" data-key="down" aria-label="Down arrow">↓</button>
+                    <button type="button" data-key="left" aria-label="Left arrow">←</button>
+                    <button type="button" data-key="right" aria-label="Right arrow">→</button>
+                </div>
+                <p id="input-status" class="status" role="status"></p>
+            </form>
+        </section>
+    </main>
+</body>
+</html>
