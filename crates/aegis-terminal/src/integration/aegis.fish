@@ -1,0 +1,172 @@
+# Aegis's shell integration for fish, started with `--init-command 'source …'` this file. It
+# tells Aegis when a prompt starts (OSC 133 A), when a command starts and ends (C and D, with
+# the exit code) and the current folder (OSC 7), and changes nothing else.
+
+if status is-interactive; and not set -q __aegis_installed
+    set -g __aegis_installed 1
+    function __aegis_preexec --on-event fish_preexec
+        printf '\e]133;C\a'
+    end
+    function __aegis_postexec --on-event fish_postexec
+        printf '\e]133;D;%s\a' $status
+    end
+    function __aegis_prompt --on-event fish_prompt
+        printf '\e]7;file://%s%s\a\e]133;A\a' $hostname (string replace -a '%' '%25' -- $PWD)
+    end
+
+    # A `claude`, `codex` or `copilot` typed here gets Aegis's MCP server and hooks: the words
+    # of AEGIS_CLAUDE_ARGS, AEGIS_CODEX_ARGS or AEGIS_COPILOT_ARGS, one per line, before the
+    # person's, unless they name Aegis's already (docs/specs/connections.md, "Agents typed in a
+    # terminal"). Not over the person's own function (an alias, an autoloaded one): fish read
+    # their config before this.
+    function __aegis_agent --argument-names name words var value
+        # As fish says it, not from inside this function (before 3.2, without its handler).
+        if not command -q $name
+            if functions -q fish_command_not_found
+                fish_command_not_found $name
+            else
+                echo "fish: Unknown command: $name" >&2
+            end
+            return 127
+        end
+        # A variable for this command only, unless the shell has one (the block Aegis opened,
+        # the person's own). Not in a block: `set -l` there would end with it.
+        test -n "$value"; and test -z "$$var"; and set -lx $var $value
+        # The person's words: what follows these four (`$argv[5..]` needs fish 3.2).
+        set -e argv[1..4]
+        command $name (string split --no-empty \n -- $words) $argv
+    end
+    if test -n "$AEGIS_CLAUDE_ARGS"; and not functions -q claude
+        function claude
+            set -l w "$AEGIS_CLAUDE_ARGS"
+            for a in $argv
+                switch $a
+                    case --settings '--settings=*' --mcp-config '--mcp-config=*'
+                        set w ''
+                end
+            end
+            __aegis_agent claude "$w" '' '' $argv
+        end
+    end
+    if test -n "$AEGIS_CODEX_ARGS"; and not functions -q codex
+        function codex
+            set -l w "$AEGIS_CODEX_ARGS"
+            for a in $argv
+                switch $a
+                    case 'mcp_servers.aegis.*'
+                        set w ''
+                end
+            end
+            __aegis_agent codex "$w" '' '' $argv
+        end
+    end
+    # The others' words end with a path in Aegis's folder, which only Aegis types: none when
+    # the person's words hold it (docs/specs/connections.md, "Typed by hand: the shells").
+    if test -n "$AEGIS_COPILOT_ARGS"; and not functions -q copilot
+        function copilot
+            set -l w "$AEGIS_COPILOT_ARGS"
+            # Not before a subcommand (`copilot plugin list`) nor for the help or the version: AWS's
+            # `copilot` takes those too, and refuses Aegis's words.
+            if set -q argv[1]; and not string match -q -- '-*' $argv[1]
+                set w ''
+            end
+            set -l last (string split \n -- "$w")[-1]
+            for a in $argv
+                if test "$a" = "$last"; or contains -- "$a" -h --help -v --version
+                    set w ''
+                end
+            end
+            __aegis_agent copilot "$w" '' '' $argv
+        end
+    end
+    # OpenCode and Kilo Code take Aegis's server and plugin from a variable.
+    if test -n "$AEGIS_OPENCODE_CONFIG"; and not functions -q opencode
+        function opencode
+            __aegis_agent opencode '' OPENCODE_CONFIG_CONTENT "$AEGIS_OPENCODE_CONFIG" $argv
+        end
+    end
+    if test -n "$AEGIS_KILO_CONFIG"; and not functions -q kilo
+        function kilo
+            __aegis_agent kilo '' KILO_CONFIG_CONTENT "$AEGIS_KILO_CONFIG" $argv
+        end
+    end
+    # Qwen Code: its server as a word, its hooks in the settings file its variable moves. It takes
+    # one --mcp-config: a person's own means none of Aegis's. None before one of its commands,
+    # which refuse it (`qwen mcp list`); a plain word that isn't one is a prompt.
+    if test -n "$AEGIS_QWEN_ARGS"; and not functions -q qwen
+        function qwen
+            set -l w "$AEGIS_QWEN_ARGS"
+            set -l commands agents auth batch board channel extensions hooks mcp review sandbox serve \
+                sessions update
+            if set -q argv[1]; and contains -- $argv[1] $commands
+                set w ''
+            end
+            for a in $argv
+                switch $a
+                    case --mcp-config '--mcp-config=*'
+                        set w ''
+                end
+            end
+            __aegis_agent qwen "$w" QWEN_CODE_SYSTEM_SETTINGS_PATH "$AEGIS_QWEN_SETTINGS" $argv
+        end
+    end
+    # Pi: its extension. Not before one of its commands, which it reads only as the first word.
+    if test -n "$AEGIS_PI_ARGS"; and not functions -q pi
+        function pi
+            set -l w "$AEGIS_PI_ARGS"
+            if set -q argv[1]; and contains -- $argv[1] install remove uninstall update list config auth
+                set w ''
+            end
+            set -l last (string split \n -- "$w")[-1]
+            for a in $argv
+                if test "$a" = "$last"
+                    set w ''
+                end
+            end
+            __aegis_agent pi "$w" '' '' $argv
+        end
+    end
+
+    # An account's command (docs/specs/accounts.md, "Typed in a terminal"): AEGIS_ACCOUNTS has a
+    # line per account, its id, program, variable and folder separated by tabs. Its function runs
+    # the program by its name, so the function above applies when there is one, with the variable
+    # set to the folder for that command only; unless the person has a function of that name.
+    # Only the id, which is a lowercase word, is in the text `eval` reads: the rest is read from
+    # the line when the command runs, and the program is escaped.
+    function __aegis_account --argument-names id
+        set -e argv[1]
+        set -l found
+        for line in (string split \n -- "$AEGIS_ACCOUNTS")
+            set -l fields (string split \t -- $line)
+            if test "$fields[1]" = "$id"
+                set found $fields
+                break
+            end
+        end
+        if test (count $found) -lt 4
+            echo "fish: Unknown command: $id" >&2
+            return 127
+        end
+        string match -qr '^[A-Za-z_][A-Za-z0-9_]*$' -- $found[3]; or return 1
+        # An account deleted since this terminal started has no folder: its command on the PATH,
+        # which went with it. Aegis makes the folder of every account at each start.
+        if not test -d "$found[4]"
+            command $id $argv
+            return
+        end
+        # Not in a block: `set -l` there would end with it.
+        set -lx $found[3] $found[4]
+        eval (string escape -- $found[2]) '$argv'
+    end
+    function __aegis_accounts
+        for line in (string split \n -- "$AEGIS_ACCOUNTS")
+            set -l fields (string split \t -- $line)
+            set -q fields[1]; or continue
+            string match -qr '^[a-z][a-z0-9_-]{0,31}$' -- $fields[1]; or continue
+            functions -q -- $fields[1]; and continue
+            eval "function $fields[1]; __aegis_account $fields[1] \$argv; end"
+        end
+    end
+    __aegis_accounts
+    functions -e __aegis_accounts
+end

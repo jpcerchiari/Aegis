@@ -1,0 +1,94 @@
+[package]
+name = "aegis"
+description = "An infinite canvas of terminals."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# GPUI (Zed's UI framework) + widgets, through one facade that pins the GPUI snapshot.
+# Pinned exactly: upgrade only in a dedicated PR (see docs/adr/0002-ui-framework.md).
+# The grammars the editor highlights with. Not `tree-sitter-languages`: its SQL grammar pins `cc ~1.2`
+# against the tree's `cc 1.7`, so the list is the spec's curated one (docs/specs/cockpit.md, Risks).
+gpui-kit = { version = "=0.7.3", features = [
+    "gpui-fast",
+    "tree-sitter-markdown", "tree-sitter-toml", "tree-sitter-yaml", "tree-sitter-diff", "tree-sitter-bash",
+    "tree-sitter-rust", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-tsx",
+    "tree-sitter-python", "tree-sitter-go", "tree-sitter-html", "tree-sitter-css", "tree-sitter-c",
+    "tree-sitter-cpp", "tree-sitter-java", "tree-sitter-lua", "tree-sitter-make",
+] }
+aegis-canvas = { path = "../aegis-canvas" }
+aegis-git = { path = "../aegis-git" }
+aegis-terminal = { path = "../aegis-terminal" }
+aegis-usage = { path = "../aegis-usage" }
+aegis-update = { path = "../aegis-update" }
+# The bus agents and the aegis command talk to Aegis over (docs/specs/connections.md).
+aegis-mcp = { path = "../aegis-mcp" }
+# The Aegis Agent's engine, its stream and its conversation (docs/specs/aegis-agent.md).
+aegis-agent = { path = "../aegis-agent" }
+# The HTTP API: its server, tokens and registry (docs/specs/api.md).
+aegis-api = { path = "../aegis-api" }
+# Already in the tree through GPUI: its channel wakes the UI from PTY threads.
+futures = "0.3"
+# Already in the tree (GPUI's): canonical paths without Windows' `\\?\` prefix, which cmd.exe refuses as a folder.
+dunce = "1"
+# Already in the tree: reads theme files and edits config.toml without losing the user's comments.
+toml_edit = "0.25"
+# Already in the tree: config.toml into typed settings, with line and column in errors.
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+# Already in the tree: the saved canvas (workspaces/*.json).
+serde_json = "1"
+# Already in the tree (GPUI's): round caps and joins for strokes. GPUI re-exports StrokeOptions
+# but not lyon's LineCap and LineJoin.
+lyon_tessellation = "1"
+# Already in the tree: an editor's files for Ctrl+P, as .gitignore leaves them.
+ignore = "0.4"
+# Already in the tree (GPUI's, with its clock): when an agent's plan limit resets, in local time.
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+# Already in the tree (uuid's): a downloaded theme checked against the git hash GitHub lists.
+sha1_smol = { version = "1", features = ["std"] }
+# Already in the tree, with its random source: the id of a session an agent is started on.
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already in the tree (alacritty's): `_exit`, which the watchdog ends a stuck Aegis with.
+libc = "0.2"
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.3", features = ["test-support"] }
+tempfile = "3"
+# Already in the tree (aegis-api's): the mock keyring the mirror's tests keep keys in.
+keyring-core = "1.0.1"
+
+# Already in the tree (GPUI's): the Windows executable's icon (build.rs).
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
+[lints]
+workspace = true
+
+# Installers: see .github/workflows/release.yml
+[package.metadata.packager]
+product-name = "Aegis"
+identifier = "io.github.jpcerchiari.aegis"
+category = "DeveloperTool"
+# PNGs for Linux (hicolor; 16 to 48 are the logo drawn for small sizes), the .icns for macOS, the
+# .ico for the .msi. aegis.exe carries it too (build.rs), and so do the shortcuts made to it.
+icons = ["icons/*.png", "icons/aegis.icns", "icons/aegis.ico"]
+
+# Ad-hoc: a signature with no Apple account. Without one a downloaded .app "is damaged and can't be
+# opened", with no way past it; with one macOS asks once, in Privacy & Security ▸ Open Anyway.
+[package.metadata.packager.macos]
+signing-identity = "-"
+
+[package.metadata.packager.nsis]
+installer-icon = "icons/aegis.ico"
+
+# The PKGBUILD downloads the package from its GitHub Release (tag and file as release.yml publishes
+# them); without this it names only the file, which makepkg can't find. Only x86_64 builds pacman.
+[package.metadata.packager.pacman]
+source = ['"https://github.com/jpcerchiari/Aegis/releases/download/v${pkgver}/aegis_${pkgver}_x86_64.tar.gz"']

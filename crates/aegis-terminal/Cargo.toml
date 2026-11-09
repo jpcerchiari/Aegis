@@ -1,0 +1,41 @@
+[package]
+name = "aegis-terminal"
+description = "A shell in a PTY for Aegis, on top of alacritty_terminal. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+alacritty_terminal = "=0.26.0"
+# Already in the tree (alacritty's): names the types of the PTY trait the shell-integration tap implements.
+polling = "3"
+# Already in the tree (gpui's): the patterns `wait_for` watches a terminal's lines for.
+regex = "1"
+# Already in the tree: reads a shell's current folder (for "new terminal in the same folder").
+sysinfo = { version = "0.31", default-features = false, features = ["system"] }
+
+[target.'cfg(unix)'.dependencies]
+# Already in the tree (alacritty's): the PTY's foreground process group (the shell the user types
+# into). Not rustix's `tcgetpgrp`, which panics on the 0 macOS answers once the shell has ended.
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already in the tree (ashpd's, with the same features): asks systemd for each terminal's scope.
+zbus = { version = "5", default-features = false, features = ["async-io"] }
+# Already in the tree (zbus's): waits for that call on the scope's own thread.
+async-io = "2"
+
+[target.'cfg(windows)'.dependencies]
+# Already in the tree (GPUI's): PATH as an installer left it in the registry.
+windows-registry = "0.6"
+# Already in the tree (GPUI's): Aegis's place in the order Windows ends programs at sign-out.
+windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

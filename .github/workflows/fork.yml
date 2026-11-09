@@ -1,0 +1,32 @@
+name: Fork
+
+# CI do Aegis (docs/fork/README.md, decisão 6). É o único workflow: nada compila no GitHub.
+#
+# Só o que não compila: formatação e licenças, no Linux, em todo PR. Build, clippy, testes e
+# executáveis rodam na máquina do usuário. Em repositório privado o runner tem 2 núcleos e os minutos
+# são contados: a primeira execução completa, nos três sistemas, gastou uns 330 dos 2000 do mês.
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A versão do Rust vem do rust-toolchain.toml: o rustup a instala na primeira chamada do cargo.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: cargo fmt --all --check
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-deny
+      - run: cargo deny --locked check

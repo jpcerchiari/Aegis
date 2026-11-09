@@ -1,0 +1,259 @@
+// A graphical app on Windows: no console window opens behind it. Debug builds keep theirs, for
+// eprintln! and panics.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+mod agents;
+mod agents_view;
+mod alert;
+mod attachments;
+mod automations;
+mod automations_view;
+mod autostart;
+mod balloon;
+mod bench;
+mod block;
+mod board;
+mod chat;
+mod checklist;
+mod checklists;
+mod chime;
+mod config;
+mod connect_dialog;
+mod editor;
+mod gallery;
+mod git_block;
+mod grid;
+mod home;
+mod inbox;
+mod ink;
+mod instructions;
+mod kanban;
+mod keys;
+mod launcher;
+mod list_dialog;
+mod markdown;
+mod menu;
+mod mirror;
+mod motion;
+mod note;
+mod notes;
+mod popup;
+mod prompt;
+mod session;
+mod settings;
+mod share_dialog;
+mod sidebar;
+mod silhouette;
+mod space_dialog;
+mod tab_strip;
+mod theme;
+mod theme_picker;
+mod title_bar;
+mod toolbar;
+mod update;
+mod usage;
+#[cfg(target_os = "linux")]
+mod watchdog;
+mod welcome;
+mod wires;
+mod workspace;
+
+use autostart::Autostart;
+use gpui_kit::component::TitleBar;
+use gpui_kit::component::notification::Notification;
+use gpui_kit::{
+    AppContext as _, Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowOptions, px, size,
+};
+use workspace::Workspace;
+
+fn main() {
+    // Claude Code runs it as its status line, in the Claude Code Aegis opens: no window.
+    if std::env::args().nth(1).as_deref() == Some(aegis_usage::claude::RELAY_FLAG) {
+        relay();
+        return;
+    }
+    // `aegis mcp`, `aegis hook claude`, `aegis read <block>`…: no window
+    // (docs/specs/connections.md).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| aegis_mcp::cli::is_verb(a)) {
+        let code = aegis_mcp::cli::run(
+            &args,
+            &aegis_mcp::cli::Env::of_process(),
+            Box::new(std::io::stdin()),
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        );
+        std::process::exit(code);
+    }
+    let mixed = std::env::args().any(|a| a == "--bench-mixed");
+    let far = std::env::args().any(|a| a == "--bench-far");
+    let zoom = std::env::args().find_map(|a| a.strip_prefix("--bench-zoom=").map(str::to_string));
+    let git = std::env::args().any(|a| a == "--bench-git");
+    let mirror = std::env::args().any(|a| a == "--bench-mirror");
+    let bench =
+        mixed || far || zoom.is_some() || git || mirror || std::env::args().any(|a| a == "--bench");
+    // A build being worked on, beside the installed Aegis: its own workspaces, settings and bus.
+    let dev = std::env::args().any(|a| a == "--dev");
+    // Started by the watchdog, whose window had stopped answering.
+    #[cfg(target_os = "linux")]
+    let after_stall = std::env::args().any(|a| a == watchdog::AFTER_STALL);
+    #[cfg(not(target_os = "linux"))]
+    let after_stall = false;
+    // The agents installed where only .bashrc or .zshrc put them.
+    #[cfg(unix)]
+    if !bench {
+        aegis_terminal::read_shell_path();
+    }
+    // At sign-out and shutdown the canvas is saved while its terminals still run.
+    #[cfg(windows)]
+    aegis_terminal::quit_before_terminals();
+    let dirs = move |dir: Option<std::path::PathBuf>| if dev { dir.map(session::dev) } else { dir };
+    // The bench starts from one terminal and must not touch the user's saved canvas. The mirror
+    // bench needs a folder for its API's key and share: a temporary one, removed at its end.
+    let data_dir = if mirror {
+        Some(bench::make_mirror_dir())
+    } else if bench {
+        None
+    } else {
+        dirs(session::dir())
+    };
+    let config_dir = dirs(config::dir());
+    // One Aegis per data folder: a second would restore the same canvas, resume the same
+    // agents and write over the first's files. It keeps nothing instead.
+    let lock = data_dir
+        .as_deref()
+        .map(|dir| session::lock(dir, session::QUITTING));
+    let second = match &lock {
+        Some(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => true,
+        Some(Err(e)) => {
+            eprintln!("aegis: couldn't lock the data folder: {e}");
+            false
+        }
+        _ => false,
+    };
+    let data_dir = data_dir.filter(|_| !second);
+    // A build being worked on keeps its remotes' keys apart from the installed Aegis's.
+    let dev_keys = dev.then(|| {
+        aegis_api::client::Keys::system(aegis_api::client::SERVICE_DEV, data_dir.as_deref())
+    });
+    // The bench leaves the person's login items alone.
+    let autostart = if bench { None } else { Autostart::locate(dev) };
+    gpui_kit::application()
+        // Every Lucide icon, by name: the toolbar and the notes use ones outside the default set.
+        .with_assets(gpui_kit::assets::AllAssets)
+        .run(move |cx| {
+            // Names Aegis in system notifications; Windows shows none without it.
+            cx.set_app_identity("jpcerchiari.Aegis", "Aegis");
+            gpui_kit::init(cx);
+            workspace::bind_keys(cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(1280.0), px(800.0)),
+                    cx,
+                ))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(if dev { "Aegis (dev)" } else { "Aegis" }.into()),
+                    ..TitleBar::title_bar_options()
+                }),
+                window_background: WindowBackgroundAppearance::Opaque,
+                // Linux: our title bar instead of the desktop's (elsewhere `titlebar` does it).
+                window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
+                app_id: Some("aegis".into()),
+                // The bench must not be throttled to 30 fps when the window loses focus.
+                inactive_frame_interval: if bench {
+                    None
+                } else {
+                    Some(std::time::Duration::from_micros(33_333))
+                },
+                ..TitleBar::window_options()
+            };
+            let (window, ws) = gpui_kit::open_window(options, cx, |window, cx| {
+                if second {
+                    let message = "Aegis is already open in another window: this one starts \
+                                   empty and keeps nothing, so the other's canvas stays as it is";
+                    workspace::show_notification(window, cx, Notification::warning(message));
+                }
+                if after_stall {
+                    let message = "Aegis restarted: its window had stopped answering, as the \
+                                   graphics driver can after the computer sleeps. The canvas is \
+                                   back from its last save, and its agents resume";
+                    workspace::show_notification(window, cx, Notification::warning(message));
+                }
+                cx.new(|cx| {
+                    let mut ws = Workspace::new(autostart, config_dir, data_dir, window, cx);
+                    if let Some(keys) = dev_keys {
+                        ws.keys = keys;
+                    }
+                    ws
+                })
+            })
+            .expect("failed to open window");
+            if let Some(kind) = zoom {
+                bench::run_zoom(window, ws, kind, cx);
+            } else if mirror {
+                bench::run_mirror(window, ws, cx);
+            } else if git {
+                bench::run_git(window, ws, cx);
+            } else if far {
+                bench::run_far(window, ws, cx);
+            } else if bench {
+                bench::run(window, ws, mixed, cx);
+            }
+            cx.on_window_closed(|cx, _| cx.quit()).detach();
+            // A UI thread stuck in a GPU wait (after a sleep) restarts Aegis.
+            #[cfg(target_os = "linux")]
+            if !bench {
+                watchdog::start(after_stall, cx);
+            }
+            cx.activate(true);
+        });
+    #[cfg(target_os = "linux")]
+    watchdog::quitting();
+    // Free before an installer starts the next Aegis.
+    drop(lock);
+    if mirror {
+        let _ = std::fs::remove_dir_all(bench::mirror_dir());
+    }
+    // Restart into an installer (Windows): it replaces Aegis, so it starts once Aegis is done.
+    let installer = update::INSTALLER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    if let Some(launch) = installer
+        && let Err(e) = launch.spawn()
+    {
+        eprintln!("aegis: couldn't start {}: {e}", launch.program.display());
+    }
+}
+
+/// Hands Aegis what Claude Code tells its status line, then prints the user's own status line
+/// (docs/specs/usage.md).
+fn relay() {
+    use std::io::{Read as _, Write as _};
+    let mut input = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut input);
+    // The folder Aegis named in the settings file: Claude Code's environment may name another.
+    let data = std::env::args_os()
+        .nth(2)
+        .map(std::path::PathBuf::from)
+        .or_else(session::dir);
+    let dirs = data.map(|data| aegis_usage::Dirs::of(&data));
+    let terminal = std::env::var("AEGIS_TERMINAL").ok();
+    // An account's Claude Code names its folder: its limits are that account's.
+    let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from);
+    let out = match &dirs {
+        Some(dirs) => aegis_usage::claude::relay(
+            &input,
+            &dirs.relay,
+            terminal.as_deref(),
+            dirs.claude.as_deref(),
+            config_dir.as_deref(),
+        ),
+        None => aegis_usage::claude::relay(&input, std::path::Path::new(""), None, None, None),
+    };
+    let _ = std::io::stdout().write_all(&out);
+}

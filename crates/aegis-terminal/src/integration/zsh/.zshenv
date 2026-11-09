@@ -1,0 +1,164 @@
+# Aegis's shell integration for zsh, found through ZDOTDIR. It tells Aegis when a prompt
+# starts (OSC 133 A), when a command starts and ends (C and D, with the exit code) and the
+# current folder (OSC 7), and changes nothing else.
+
+# The user's ZDOTDIR back first: zsh reads .zprofile, .zshrc and .zlogin from it.
+if (( ${+AEGIS_ZDOTDIR} )); then
+    ZDOTDIR=$AEGIS_ZDOTDIR
+    builtin unset AEGIS_ZDOTDIR
+else
+    builtin unset ZDOTDIR
+fi
+# The user's .zshenv, which may set ZDOTDIR itself.
+[[ -r ${ZDOTDIR:-$HOME}/.zshenv ]] && builtin source ${ZDOTDIR:-$HOME}/.zshenv
+
+if [[ -o interactive && -z ${__aegis_installed-} ]]; then
+    __aegis_installed=1
+    __aegis_precmd() {
+        builtin local ret=$?
+        builtin printf '\e]133;D;%s\a\e]7;file://%s%s\a\e]133;A\a' $ret "$HOST" "${PWD//\%/%25}"
+        builtin return $ret
+    }
+    __aegis_preexec() {
+        builtin printf '\e]133;C\a'
+    }
+    builtin autoload -Uz add-zsh-hook
+    # Before the .zshrc's hooks: the first precmd sees the command's status.
+    add-zsh-hook precmd __aegis_precmd
+    add-zsh-hook preexec __aegis_preexec
+
+    # A `claude`, `codex` or `copilot` typed here gets Aegis's MCP server and hooks: the words of
+    # AEGIS_CLAUDE_ARGS, AEGIS_CODEX_ARGS or AEGIS_COPILOT_ARGS, one per line, before the
+    # person's, unless they name Aegis's already (docs/specs/connections.md, "Agents typed in a
+    # terminal"). A function of that name in the .zshrc, read next, replaces it; `function` keeps an
+    # alias of that name from breaking this.
+    __aegis_agent() {
+        builtin local name="$1" w="$2"
+        # A variable for this command only, unless the shell has one (the block Aegis opened,
+        # the person's own).
+        if [[ -n "$4" ]]; then
+            [[ -n "${(P)3-}" ]] || builtin local -x "$3=$4"
+        fi
+        builtin shift 4
+        # As zsh says it, not from inside this function. A path search, as `command` does it:
+        # $commands misses an agent installed after zsh read its folder.
+        if ! builtin whence -p -- "$name" > /dev/null; then
+            builtin print -u2 "zsh: command not found: $name"
+            builtin return 127
+        fi
+        if [[ -z "$w" ]]; then
+            command "$name" "$@"
+        else
+            command "$name" "${(@f)w}" "$@"
+        fi
+    }
+    if [[ -n "${AEGIS_CLAUDE_ARGS-}" ]] && (( ! $+functions[claude] )); then
+        function claude {
+            builtin local w="${AEGIS_CLAUDE_ARGS-}" a
+            for a in "$@"; do
+                case "$a" in (--settings | --settings=* | --mcp-config | --mcp-config=*) w= ;; esac
+            done
+            __aegis_agent claude "$w" "" "" "$@"
+        }
+    fi
+    if [[ -n "${AEGIS_CODEX_ARGS-}" ]] && (( ! $+functions[codex] )); then
+        function codex {
+            builtin local w="${AEGIS_CODEX_ARGS-}" a
+            for a in "$@"; do
+                case "$a" in (mcp_servers.aegis.*) w= ;; esac
+            done
+            __aegis_agent codex "$w" "" "" "$@"
+        }
+    fi
+    # The others' words end with a path in Aegis's folder, which only Aegis types: none when
+    # the person's words hold it (docs/specs/connections.md, "Typed by hand: the shells").
+    if [[ -n "${AEGIS_COPILOT_ARGS-}" ]] && (( ! $+functions[copilot] )); then
+        function copilot {
+            builtin local w="${AEGIS_COPILOT_ARGS-}" last a
+            # Not before a subcommand (`copilot plugin list`) nor for the help or the version: AWS's
+            # `copilot` takes those too, and refuses Aegis's words.
+            case "${1--}" in (-*) ;; (*) w= ;; esac
+            last="${w##*$'\n'}"
+            for a in "$@"; do
+                case "$a" in ("$last" | -h | --help | -v | --version) w= ;; esac
+            done
+            __aegis_agent copilot "$w" "" "" "$@"
+        }
+    fi
+    # OpenCode and Kilo Code take Aegis's server and plugin from a variable.
+    if [[ -n "${AEGIS_OPENCODE_CONFIG-}" ]] && (( ! $+functions[opencode] )); then
+        function opencode {
+            __aegis_agent opencode "" OPENCODE_CONFIG_CONTENT "${AEGIS_OPENCODE_CONFIG-}" "$@"
+        }
+    fi
+    if [[ -n "${AEGIS_KILO_CONFIG-}" ]] && (( ! $+functions[kilo] )); then
+        function kilo {
+            __aegis_agent kilo "" KILO_CONFIG_CONTENT "${AEGIS_KILO_CONFIG-}" "$@"
+        }
+    fi
+    # Qwen Code: its server as a word, its hooks in the settings file its variable moves. It takes
+    # one --mcp-config: a person's own means none of Aegis's. None before one of its commands,
+    # which refuse it (`qwen mcp list`); a plain word that isn't one is a prompt.
+    if [[ -n "${AEGIS_QWEN_ARGS-}" ]] && (( ! $+functions[qwen] )); then
+        function qwen {
+            builtin local w="${AEGIS_QWEN_ARGS-}" a
+            case "${1-}" in
+                (agents | auth | batch | board | channel | extensions | hooks | mcp | review | sandbox | \
+                    serve | sessions | update) w= ;;
+            esac
+            for a in "$@"; do
+                case "$a" in (--mcp-config | --mcp-config=*) w= ;; esac
+            done
+            __aegis_agent qwen "$w" QWEN_CODE_SYSTEM_SETTINGS_PATH "${AEGIS_QWEN_SETTINGS-}" "$@"
+        }
+    fi
+    # Pi: its extension. Not before one of its commands, which it reads only as the first word.
+    if [[ -n "${AEGIS_PI_ARGS-}" ]] && (( ! $+functions[pi] )); then
+        function pi {
+            builtin local w="${AEGIS_PI_ARGS-}" last a
+            case "${1-}" in (install | remove | uninstall | update | list | config | auth) w= ;; esac
+            last="${w##*$'\n'}"
+            for a in "$@"; do
+                case "$a" in ("$last") w= ;; esac
+            done
+            __aegis_agent pi "$w" "" "" "$@"
+        }
+    fi
+
+    # An account's command (docs/specs/accounts.md, "Typed in a terminal"): AEGIS_ACCOUNTS has a
+    # line per account, its id, program, variable and folder separated by tabs. Its function runs
+    # the program by its name, so the function above applies when there is one, with the variable
+    # set to the folder for that command only; unless the person has a function of that name.
+    # Only the id, which is a lowercase word, is in the text `eval` reads: the rest is read from
+    # the line when the command runs. Patterns, not a regex: that is a module zsh may not find.
+    __aegis_account() {
+        builtin local id="$1" line aid prog var folder
+        builtin shift
+        for line in "${(@f)${AEGIS_ACCOUNTS-}}"; do
+            IFS=$'\t' builtin read -r aid prog var folder <<< "$line"
+            [[ "$aid" == "$id" ]] && break
+            aid=
+        done
+        if [[ -z "$aid" ]]; then
+            builtin print -u2 "zsh: command not found: $id"
+            builtin return 127
+        fi
+        [[ -n "$var" && "$var" != *[^A-Za-z0-9_]* && "$var" != [0-9]* ]] || builtin return 1
+        # An account deleted since this terminal started has no folder: its command on the PATH,
+        # which went with it. Aegis makes the folder of every account at each start.
+        [[ -d "$folder" ]] || { command "$id" "$@"; builtin return; }
+        builtin local -x "$var=$folder"
+        "$prog" "$@"
+    }
+    __aegis_accounts() {
+        builtin local line id
+        for line in "${(@f)${AEGIS_ACCOUNTS-}}"; do
+            id=${line%%$'\t'*}
+            [[ "$id" == [a-z]* && "$id" != *[^a-z0-9_-]* && ${#id} -le 32 ]] || continue
+            (( $+functions[$id] )) && continue
+            builtin eval "function $id { __aegis_account $id \"\$@\"; }"
+        done
+    }
+    __aegis_accounts
+    builtin unfunction __aegis_accounts
+fi

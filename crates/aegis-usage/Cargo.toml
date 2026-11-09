@@ -1,0 +1,26 @@
+[package]
+name = "aegis-usage"
+description = "What CLI agents tell about their sessions and plan limits, read from their own files, and their accounts' folders. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Already in the tree: the agents' JSON and JSONL files.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Already in the tree (GPUI's): Codex's ISO timestamps and its sessions' dated folders.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+[target.'cfg(windows)'.dependencies]
+# An account's folder shared on Windows by a directory junction, which needs no privilege (MIT).
+junction = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
