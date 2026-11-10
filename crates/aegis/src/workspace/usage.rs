@@ -30,7 +30,13 @@ pub(super) const CLAUDE_LOOK: Duration = Duration::from_secs(15);
 
 /// What `/usage` is asked with: by whose limits they are, the Claude Code to run, the empty folder
 /// to run it in and the account's folder (None: the agent's own).
-pub(super) type Job = (String, PathBuf, PathBuf, Option<PathBuf>);
+pub(super) type Job = (String, ProbeProgram, PathBuf, Option<PathBuf>);
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ProbeProgram {
+    Native(PathBuf),
+    Wsl { launcher: String, program: String },
+}
 
 /// What a read found: each terminal's session, in the order asked, and each agent's limits.
 pub(crate) type Read = (Vec<Option<Session>>, Vec<(String, Limits)>);
@@ -87,8 +93,8 @@ impl Workspace {
     /// Code Aegis opens gets its settings file (the status line of the plan's limits, and the
     /// hooks) and its MCP server; Codex gets the server and its hooks (those only with `aegis`
     /// on the terminal's PATH), unless the shell is cmd (they go in single quotes) or Windows
-    /// PowerShell 5.1 (it strips the `"` inside them; pwsh 7 doesn't). Nothing under WSL, where
-    /// Aegis's paths aren't the shell's, nor without a data folder.
+    /// PowerShell 5.1 (it strips the `"` inside them; pwsh 7 doesn't). WSL's Claude settings
+    /// use paths translated by WSLENV, and are separate from the Windows settings.
     pub(super) fn typed_in(
         &self,
         shell: Option<&str>,
@@ -96,6 +102,26 @@ impl Workspace {
         command: &str,
     ) -> String {
         let builtin = agent.and_then(|a| a.builtin);
+        if cfg!(windows) && self.shell_is(shell, "wsl") {
+            let mut line = command.to_string();
+            match builtin {
+                Some(Agent::CLAUDE) => {
+                    if let Some((_, mcp)) = self.wsl_claude_files() {
+                        line.push_str(" --settings \"$AEGIS_WSL_CLAUDE_SETTINGS\"");
+                        if mcp.is_some() {
+                            line.push_str(" --mcp-config=\"$AEGIS_WSL_CLAUDE_MCP\"");
+                        }
+                    }
+                }
+                Some(Agent::CODEX) if self.wsl_connected() => {
+                    for word in aegis_mcp::codex_wsl_args() {
+                        line.push_str(&format!(" '{word}'"));
+                    }
+                }
+                _ => {}
+            }
+            return line;
+        }
         let Some(gives) = self.gives(shell) else {
             return command.to_string();
         };
@@ -143,10 +169,15 @@ impl Workspace {
             let limits = self.config.usage.claude_limits;
             claude_args(&g.data, &g.exe, windows, limits, g.connected)
         });
-        let codex = gives
-            .as_ref()
-            .filter(|g| g.codex)
-            .and_then(|g| aegis_mcp::codex_args(&g.exe.to_string_lossy(), windows, g.on_path));
+        let wsl = cfg!(windows) && self.shell_is(shell, "wsl");
+        let codex = if wsl && self.wsl_connected() {
+            Some(aegis_mcp::codex_wsl_args())
+        } else {
+            gives
+                .as_ref()
+                .filter(|g| g.codex)
+                .and_then(|g| aegis_mcp::codex_args(&g.exe.to_string_lossy(), windows, g.on_path))
+        };
         // The others' files run `<data>/bin/aegis`: only where that is on the PATH.
         let data = gives
             .as_ref()
@@ -163,7 +194,7 @@ impl Workspace {
             .filter(|_| qwen.is_some())
             .and_then(|d| qwen_settings(d, windows))
             .unwrap_or_default();
-        [
+        let mut env: Vec<_> = [
             ("AEGIS_CLAUDE_ARGS", words(claude)),
             ("AEGIS_CODEX_ARGS", words(codex)),
             (
@@ -185,7 +216,38 @@ impl Workspace {
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
-        .collect()
+        .collect();
+        if wsl && let Some(exe) = program() {
+            let (settings, mcp) = self.wsl_claude_files().unzip();
+            env.extend([
+                ("AEGIS_WSL_EXE".into(), exe.to_string_lossy().into_owned()),
+                (
+                    "AEGIS_WSL_CLAUDE_SETTINGS".into(),
+                    settings
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "AEGIS_WSL_CLAUDE_MCP".into(),
+                    mcp.flatten()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                ),
+            ]);
+        }
+        env
+    }
+
+    fn wsl_claude_files(&self) -> Option<(PathBuf, Option<PathBuf>)> {
+        aegis_usage::claude::wsl_files(
+            self.data_dir.as_deref()?,
+            self.config.usage.claude_limits,
+            self.wsl_connected(),
+        )
+    }
+
+    pub(super) fn wsl_connected(&self) -> bool {
+        self.config.connections.enabled && self.bus.is_some()
     }
 
     /// The variables the shell of a block Aegis opens for `agent` gets: an account's folder
@@ -281,11 +343,17 @@ impl Workspace {
         };
         let mut keys = Vec::new();
         let mut procs = Vec::new();
+        let mut wsl = Vec::new();
         for space in self.spaces() {
             for (id, pane) in space.terminals() {
                 if let Some(proc) = self.proc_of(pane) {
                     keys.push((space.id.clone(), id));
                     procs.push(proc);
+                } else if pane.term.is_wsl()
+                    && pane.seen.agent.as_deref() == Some("claude")
+                    && let Some(started) = pane.seen.started
+                {
+                    wsl.push(((space.id.clone(), id), pane.term.id().to_owned(), started));
                 }
             }
         }
@@ -295,8 +363,21 @@ impl Workspace {
         self._usage = cx.spawn_in(window, async move |ws, cx| {
             let read = cx
                 .background_executor()
-                .spawn(async move { aegis_usage::read(&procs, &dirs, &homes, notes::now()) })
+                .spawn(async move {
+                    let (mut sessions, limits) =
+                        aegis_usage::read(&procs, &dirs, &homes, notes::now());
+                    for (key, terminal, started) in wsl {
+                        keys.push(key);
+                        sessions.push(aegis_usage::claude::relayed(
+                            &terminal,
+                            started,
+                            &dirs.relay,
+                        ));
+                    }
+                    (keys, (sessions, limits))
+                })
                 .await;
+            let (keys, read) = read;
             ws.update_in(cx, |ws, window, cx| ws.usage_done(keys, read, window, cx))
                 .ok();
         });
@@ -351,6 +432,7 @@ impl Workspace {
                     .position(|(s, b)| *s == space.id && *b == id)
                     .and_then(|i| sessions.get(i).cloned().flatten());
                 let pane = space.terminal_mut(id).expect("a terminal");
+                let found = found.filter(|_| !pane.term.is_wsl() || pane.seen.session.is_some());
                 if pane.usage != found {
                     pane.usage = found;
                     changed = true;
@@ -454,8 +536,14 @@ impl Workspace {
         cx.spawn(async move |ws, cx| {
             let (found, asked) = oneshot::channel();
             std::thread::spawn(move || {
-                let polled =
-                    aegis_usage::claude::poll(&program, &dir, config_dir.as_deref(), notes::now());
+                let polled = match program {
+                    ProbeProgram::Native(path) => {
+                        aegis_usage::claude::poll(&path, &dir, config_dir.as_deref(), notes::now())
+                    }
+                    ProbeProgram::Wsl { launcher, program } => {
+                        aegis_usage::claude::poll_wsl(&launcher, &program, &dir, notes::now())
+                    }
+                };
                 let _ = found.send(polled);
             });
             let found = asked.await.ok().flatten();
@@ -570,19 +658,31 @@ impl Workspace {
         let Some(program) = claude.command.split_whitespace().next() else {
             return Vec::new();
         };
-        let program = if program.contains(['/', '\\']) {
-            PathBuf::from(program)
+        let native = if program.contains(['/', '\\']) {
+            Some(PathBuf::from(program))
         } else {
-            let Some(found) = aegis_terminal::locate(program) else {
-                return Vec::new();
-            };
-            found
+            aegis_terminal::locate(program)
         };
+        let launcher = self
+            .agent_shell(claude)
+            .map(|shell| &shell.program)
+            .or(self.config.shell.program.as_ref())
+            .filter(|shell| cfg!(windows) && aegis_terminal::is_shell(shell, "wsl"));
         let probe = data.join("usage").join("probe");
         self.claude_agents()
-            .map(|a| {
+            .filter_map(|a| {
                 let folder = a.account.as_ref().map(|account| account.folder.clone());
-                (a.id.clone(), program.clone(), probe.clone(), folder)
+                let launch = if folder.is_none()
+                    && let Some(launcher) = launcher
+                {
+                    ProbeProgram::Wsl {
+                        launcher: launcher.clone(),
+                        program: program.to_owned(),
+                    }
+                } else {
+                    ProbeProgram::Native(native.clone()?)
+                };
+                Some((a.id.clone(), launch, probe.clone(), folder))
             })
             .collect()
     }

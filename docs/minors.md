@@ -517,14 +517,10 @@ From batches 3 and 4 (line numbers of `development` at 5046612).
 - [ ] **The pointer stays a text cursor over a program that uses the mouse.** The body's `cursor_text`
   (`crates/aegis/src/block.rs`) doesn't look at the mode, so htop's or Claude Code's buttons look like text to
   select. Fix: show the arrow when `modes().mouse`, read in the snapshot rather than under the lock while painting.
-- [ ] **Aegis doesn't see an agent that runs in WSL.** `aegis_terminal::inspect` reads the Windows processes under a
-  block's shell, and WSL 2's Linux processes aren't among them, so the snapshot (`Space::see`,
-  `crates/aegis/src/workspace/mod.rs`) drops the agent `start_agent` named: an agent set to WSL (Settings ▸ Agents ▸
-  Shell), or opened while Settings ▸ Shell is WSL, has no status dot, closing its block doesn't warn, and a restart
-  brings back a WSL shell without it; `spawn_agent` refuses it (`Workspace::spawn_problem`) since its prompt could
-  never be typed. Fix: read the distribution's processes (`wsl.exe -e ps -o pid,args`, or
-  `\\wsl.localhost\<distribution>\proc`) and match them to the block by the shell's session, then resume it with its
-  resume command.
+- [ ] **`spawn_agent` refuses Codex in WSL.** Codex can send `SessionStart` only after the first prompt.
+  Find a separate readiness signal that confirms the prompt is ready after trust. An agent that crashes before
+  sending `SessionEnd` can also leave its status visible until its block closes.
+  See the [WSL checks](fork/README.md#ponto-de-partida-wsl).
 - [ ] **A long "Copied 12 lines" can be cut in a narrow terminal.** `copied_pill` (`crates/aegis/src/block.rs`)
   grows the pill away from the nearer side of the body, which keeps a pill narrower than half the body inside it; in a
   terminal of about 20 columns, "Copied 12 lines" let go just right of the middle passes the left edge, which clips
@@ -1657,13 +1653,6 @@ Left by ask_user v2 (kanban card 34, `docs/specs/ask-user.md`).
   `spawn_agent` with `fork` from one of them says it can't, though `pi --fork <id>` and `grok --resume <id>
   --fork-session` exist, since Aegis couldn't find the fork's own session to resume it after a restart. Fix: give a
   fork a `--session-id` Aegis picks, once each agent takes one with its fork flag.
-- [ ] **An agent in WSL gets none of Aegis's server, hooks or status line.** `Workspace::gives`
-  (`crates/aegis/src/workspace/usage.rs`) gives nothing when the block's shell is `wsl.exe`: Aegis's files are
-  Windows paths, the bus is Windows' loopback, and the block's variables (`AEGIS_BUS`, `AEGIS_TERMINAL`, the
-  `AEGIS_*_ARGS`) don't cross into WSL. A Claude Code set to WSL has no Aegis tools, no plan limits and no hooks.
-  Fix: in a WSL block, list those variables in `WSLENV` (`/p` for paths), type Claude Code's and Codex's flags with
-  their files as `/mnt/c/…` paths, and run the MCP bridge as `aegis.exe` through WSL's interop, which reaches
-  Windows' loopback.
 - [ ] **Gemini CLI and Qwen Code ask before `reply`.** Left by the plan of card 69
   (`docs/specs/agent-protocol.md`, 9): every task now asks for `reply`, and these two show "Allow execution of MCP
   tool reply?" until the person allows it always; a subagent there waits on its own dialog. They let a whole server

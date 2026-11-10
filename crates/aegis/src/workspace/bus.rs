@@ -11,6 +11,7 @@ use aegis_mcp::{Bus, Call, Incoming, Message, Reply, rpc, tools};
 use futures::StreamExt as _;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::{App, Context, Task, Window};
+use serde::Deserialize as _;
 use serde_json::json;
 
 use super::delegate::ENTER_AFTER;
@@ -268,7 +269,12 @@ impl Workspace {
             }
             Incoming::Notification { method, .. } if off && method == aegis_mcp::hooks::METHOD => {}
             Incoming::Notification { method, params } if method == aegis_mcp::hooks::METHOD => {
-                if let Ok(event) = serde_json::from_value(params) {
+                if let Ok(event) = aegis_mcp::AgentEvent::deserialize(&params) {
+                    if let Some(pane) = self.pane_mut(&hello.terminal).filter(|p| p.term.is_wsl())
+                        && !pane.wsl_hook(&event, &params)
+                    {
+                        return;
+                    }
                     self.agent_event(&hello.terminal, event, window, cx);
                 }
             }
@@ -903,8 +909,7 @@ impl Workspace {
         self.tool_conns.values().any(|t| t == terminal)
     }
 
-    /// The terminal of `pane` runs WSL, which gets neither `AEGIS_BUS` nor a `aegis` it can
-    /// run.
+    /// The terminal of `pane` runs WSL, where the Windows bridge is available through interop.
     fn pane_in_wsl(&self, pane: &Pane) -> bool {
         self.shell_is(pane.shell.as_ref().map(|s| s.program.as_str()), "wsl")
     }
@@ -924,7 +929,9 @@ impl Workspace {
         if !self.config.connections.enabled {
             return "connections are off (Settings ▸ Connections ▸ Agents in Aegis)".into();
         }
-        if self.pane_in_wsl(pane) {
+        if self.pane_in_wsl(pane)
+            && !(pane.term.is_wsl() && matches!(agent, Some(Agent::CLAUDE | Agent::CODEX)))
+        {
             return "it runs in WSL, where Aegis can't give it its server".into();
         }
         match agent {
@@ -1102,6 +1109,54 @@ impl Workspace {
     }
 }
 
+impl Pane {
+    /// Session identity from Linux, where the host's process inspection cannot find the agent.
+    fn wsl_hook(&mut self, event: &aegis_mcp::AgentEvent, params: &serde_json::Value) -> bool {
+        use aegis_mcp::AgentEvent;
+        let session = params["session_id"]
+            .as_str()
+            .filter(|id| aegis_usage::valid_session_id(id));
+        match event {
+            AgentEvent::Started => {
+                let (Some(agent @ ("claude" | "codex")), Some(session)) =
+                    (params["agent"].as_str(), session)
+                else {
+                    return false;
+                };
+                self.seen.agent = Some(agent.to_owned());
+                self.seen.session = Some(session.to_owned());
+                self.seen.started = Some(crate::notes::now());
+                self.seen.pid = None;
+                self.wsl_command = self.term.status().running;
+                if let Some(folder) = params["folder"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .filter(|p| p.is_absolute())
+                {
+                    self.seen.folder = Some(folder);
+                }
+                self.resuming = None;
+                if self.seen.agent != self.flags_for {
+                    (self.model, self.effort, self.flags_for) = (None, None, None);
+                }
+            }
+            AgentEvent::Ended => {
+                if session.is_none() || self.seen.session.as_deref() != session {
+                    return false;
+                }
+                self.seen.agent = None;
+                self.seen.session = None;
+                self.seen.started = None;
+                self.wsl_command = None;
+                self.usage = None;
+                (self.model, self.effort, self.flags_for) = (None, None, None);
+            }
+            _ => {}
+        }
+        true
+    }
+}
+
 /// The turn of the agent in block `id`, as `list_blocks` says it: `, working`, `, idle`, `,
 /// waiting for its person: <what>`; nothing for a block with no agent, or one not yet heard.
 pub(super) fn agent_state(space: &Space, id: BlockId) -> String {
@@ -1170,4 +1225,38 @@ pub(super) fn target(space: &Space, me: BlockId, uid: &str) -> Result<BlockId, R
         )));
     }
     Ok(id)
+}
+
+#[cfg(test)]
+mod wsl_tests {
+    use super::*;
+    use aegis_mcp::AgentEvent;
+    use aegis_terminal::{Palette, TermOptions, Terminal};
+
+    #[test]
+    fn the_current_wsl_session_survives_an_old_sessions_end() {
+        let term = Terminal::viewer(
+            "test",
+            (80, 24),
+            Palette::default(),
+            TermOptions::default(),
+            std::sync::Arc::new(|| {}),
+        );
+        let mut pane = Pane::new(term, None, None);
+        assert!(!pane.wsl_hook(
+            &AgentEvent::Started,
+            &json!({"agent": "claude", "session_id": "../bad"})
+        ));
+        assert!(pane.wsl_hook(
+            &AgentEvent::Started,
+            &json!({"agent": "claude", "session_id": "a-b"})
+        ));
+        assert_eq!(pane.seen.agent.as_deref(), Some("claude"));
+        assert_eq!(pane.seen.session.as_deref(), Some("a-b"));
+        assert!(pane.seen.pid.is_none());
+        assert!(!pane.wsl_hook(&AgentEvent::Ended, &json!({"session_id": "old"})));
+        assert!(pane.wsl_hook(&AgentEvent::Ended, &json!({"session_id": "a-b"})));
+        assert!(pane.seen.agent.is_none());
+        assert!(pane.seen.session.is_none());
+    }
 }

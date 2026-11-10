@@ -1,7 +1,7 @@
 //! Agents' session usage and plan limits (docs/specs/usage.md).
 
 use super::*;
-use crate::workspace::usage::{CLAUDE_EVERY, CLAUDE_MIN};
+use crate::workspace::usage::{CLAUDE_EVERY, CLAUDE_MIN, ProbeProgram};
 
 /// The Claude Code and Codex Aegis types get its server and hooks; Claude Code its status line
 /// too (docs/specs/connections.md, What Aegis types into each agent).
@@ -110,7 +110,12 @@ fn the_agents_aegis_opens_get_its_server_hooks_and_status_line(cx: &mut TestAppC
             assert_eq!(ws.typed_in(None, codex.as_ref(), "codex"), "codex", "{program}");
         }
         ws.config.shell.program = Some("WSL.exe".into());
-        assert_eq!(ws.typed_in(None, claude.as_ref(), "claude"), "claude");
+        let line = ws.typed_in(None, claude.as_ref(), "claude");
+        if cfg!(windows) {
+            assert_eq!(line, "claude --settings \"$AEGIS_WSL_CLAUDE_SETTINGS\" --mcp-config=\"$AEGIS_WSL_CLAUDE_MCP\"");
+        } else {
+            assert_eq!(line, "claude");
+        }
         assert_eq!(ws.typed_in(None, copilot.as_ref(), "copilot"), "copilot");
         ws.config.shell.program = Some("powershell".into());
         assert!(ws.typed_in(None, copilot.as_ref(), "copilot").contains("--plugin-dir="));
@@ -229,7 +234,13 @@ fn new_terminals_carry_what_aegis_types_after_claude_and_codex(cx: &mut TestAppC
         }
         ws.config.shell.program = Some("WSL.exe".into());
         assert_eq!(word(ws, "AEGIS_CLAUDE_ARGS"), "");
-        assert_eq!(word(ws, "AEGIS_CODEX_ARGS"), "");
+        if cfg!(windows) {
+            assert!(word(ws, "AEGIS_WSL_CLAUDE_SETTINGS").ends_with("claude-statusline.json"));
+            assert!(word(ws, "AEGIS_WSL_EXE").ends_with(".exe"));
+            assert!(word(ws, "AEGIS_CODEX_ARGS").contains("$AEGIS_WSL_EXE"));
+        } else {
+            assert_eq!(word(ws, "AEGIS_CODEX_ARGS"), "");
+        }
         assert_eq!(word(ws, "AEGIS_COPILOT_ARGS"), "");
         ws.config.shell.program = None;
         // Without `<data>/bin` on the terminal's PATH, the files' program can't be found.
@@ -533,8 +544,35 @@ fn claude_code_is_asked_for_its_limits_when_wanted(cx: &mut TestAppContext) {
         let probe = data.path().join("usage").join("probe");
         assert_eq!(
             ws.claude_poll_jobs(),
-            [("claude".to_string(), program.clone(), probe.clone(), None)]
+            [(
+                "claude".to_string(),
+                ProbeProgram::Native(program.clone()),
+                probe.clone(),
+                None
+            )]
         );
+        #[cfg(windows)]
+        {
+            let launcher = "C:/Windows/System32/wsl.exe".to_string();
+            ws.config.shell.program = Some(launcher.clone());
+            ws.agents
+                .iter_mut()
+                .find(|a| a.id == "claude")
+                .unwrap()
+                .command = "/home/user/.local/bin/claude".into();
+            assert_eq!(
+                ws.claude_poll_jobs(),
+                [(
+                    "claude".into(),
+                    ProbeProgram::Wsl {
+                        launcher,
+                        program: "/home/user/.local/bin/claude".into()
+                    },
+                    probe,
+                    None
+                )]
+            );
+        }
         ws.config.usage.claude_limits = false;
         assert_eq!(ws.claude_poll_jobs(), []);
         ws.config.usage.claude_limits = true;
@@ -593,7 +631,7 @@ fn an_account_with_a_login_is_asked_for_its_limits_without_having_run(cx: &mut T
             jobs[1],
             (
                 "claude2".to_string(),
-                program.clone(),
+                ProbeProgram::Native(program.clone()),
                 data.path().join("usage").join("probe"),
                 Some(account)
             )

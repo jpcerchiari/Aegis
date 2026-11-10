@@ -220,13 +220,13 @@ fn reported(prompt: &str) -> Option<Vec<String>> {
     Some(ids)
 }
 
-/// A Codex hook's input (as of 0.154, docs/plans/2026-10-16-connections-batch-7.md, S1). None
-/// for what Aegis doesn't follow: `SessionEnd` also comes after 30 idle minutes.
+/// A Codex hook's input. WSL subscribes to `SessionEnd` to clear an unloaded session.
 pub fn codex(input: &Value) -> Option<AgentEvent> {
     let text = |key: &str| input[key].as_str().map(str::to_string);
     Some(match input["hook_event_name"].as_str()? {
         "SessionStart" if input["source"] == "compact" => return None,
         "SessionStart" => AgentEvent::Started,
+        "SessionEnd" if input["session_id"].is_string() => AgentEvent::Ended,
         // Once a turn takes the prompt in: a new turn, or the one under way at its next tool.
         "UserPromptSubmit" => AgentEvent::Submitted { at_enter: false },
         "PostToolUse" => AgentEvent::Working,
@@ -751,6 +751,10 @@ mod tests {
         );
         // Also after 30 idle minutes: a snapshot tells when Codex quits.
         assert_eq!(event(json!({ "hook_event_name": "SessionEnd" })), None);
+        assert_eq!(
+            event(json!({ "hook_event_name": "SessionEnd", "session_id": "id" })),
+            Some(AgentEvent::Ended)
+        );
         let notify = json!({ "type": "agent-turn-complete", "last-assistant-message": "x" });
         assert_eq!(event(notify), None, "notify's argument is no hook");
     }

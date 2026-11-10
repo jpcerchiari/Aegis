@@ -971,6 +971,10 @@ impl Layout {
                         // One answer per terminal, in order.
                         let found = found.next().unwrap_or_default();
                         let session = sessions.next().flatten();
+                        // The Windows process scan cannot replace a WSL session from its hook.
+                        if item.session.is_some() {
+                            return Item::Terminal(item.clone());
+                        }
                         // Its saved agent, typed back, isn't up yet: the next start resumes it
                         // still.
                         if let Some(saved) = resuming.as_ref().filter(|_| found.agent.is_none()) {
@@ -2164,15 +2168,15 @@ mod tests {
                     TerminalItem {
                         uid: "t2".into(),
                         rect: Rect::new(20.0, 0.0, 30.0, 10.0).into(),
-                        folder: None,
-                        agent: None,
-                        session: None,
+                        folder: Some("C:/project with spaces".into()),
+                        agent: Some("claude".into()),
+                        session: Some("session-2".into()),
                         opened_by: None,
                         model: None,
                         effort: None,
                         account: None,
                         role: None,
-                        shell: None,
+                        shell: Some("WSL".into()),
                     },
                     Processes::default(),
                     None,
@@ -2194,6 +2198,12 @@ mod tests {
         let Item::Terminal(first) = &saved.items[0] else {
             panic!()
         };
+        let Item::Terminal(wsl) = &saved.items[2] else {
+            panic!()
+        };
+        assert_eq!(wsl.agent.as_deref(), Some("claude"));
+        assert_eq!(wsl.session.as_deref(), Some("session-2"));
+        assert_eq!(wsl.folder.as_deref(), Some("C:/project with spaces"));
         assert_eq!(
             (
                 first.opened_by.as_deref(),

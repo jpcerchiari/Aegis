@@ -498,12 +498,22 @@ impl Pane {
     /// macOS the shell isn't the terminal's process, `login` is); before one found it, its shell
     /// being in front does. False when the OS can't tell (Windows).
     pub(super) fn shell_in_front(&self) -> bool {
+        if self.term.is_wsl() {
+            // A different shell command cannot take the agent's prompt after it exits.
+            return self.term.exited()
+                || self.wsl_command.is_none()
+                || self.term.status().running != self.wsl_command;
+        }
         let p = self.term.processes();
         match (p.foreground, self.seen.pid) {
             (None, _) => false,
             (front, Some(agent)) => front != Some(agent),
             (front, None) => front == p.shell,
         }
+    }
+
+    pub(super) fn agent_seen(&self) -> bool {
+        self.seen.pid.is_some() || self.term.is_wsl() && self.seen.session.is_some()
     }
 
     /// Aegis may type into it (its block id `uid`): an agent runs there, not waiting for its
@@ -537,7 +547,7 @@ impl Pane {
     /// in the last NOTICE_GAP (that text's Enter, and a second one, may still be due).
     pub(super) fn takes_notice(&self) -> Option<bool> {
         self.seen.agent.as_ref()?;
-        if self.seen.pid.is_none() {
+        if !self.agent_seen() {
             return Some(false);
         }
         if self.shell_in_front() {
@@ -556,7 +566,7 @@ impl Pane {
     /// found its agent. One Aegis typed there may never have started (its folder's trust
     /// declined), and before a snapshot found it, macOS can't tell its shell is in front.
     fn takes_handing(&self, uid: &str) -> Result<(), Reply> {
-        if self.seen.agent.is_some() && self.seen.pid.is_none() {
+        if self.seen.agent.is_some() && !self.agent_seen() {
             return Err(Reply::err(format!(
                 "{uid} is still starting: try again in a few seconds."
             )));
@@ -572,7 +582,7 @@ impl Pane {
         let young = self
             .typed_agent
             .is_some_and(|at| at.elapsed() < super::spawn::STARTS_WITHIN);
-        self.agent().is_some() && (self.starting.is_some() || self.seen.pid.is_none() && young)
+        self.agent().is_some() && (self.starting.is_some() || !self.agent_seen() && young)
     }
 }
 

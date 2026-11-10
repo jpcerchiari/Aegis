@@ -52,32 +52,68 @@ pub fn codex_args(exe: &str, windows: bool, hooks: bool) -> Option<Vec<String>> 
     if exe.is_empty() || exe.contains(['\'', '"', '\\', '\n']) {
         return None;
     }
+    Some(codex_words(
+        &exe,
+        hooks.then_some("aegis hook codex"),
+        false,
+    ))
+}
+
+/// Codex's Linux process uses a shell to expand the translated path to the Windows bridge.
+pub fn codex_wsl_args() -> Vec<String> {
+    codex_words("/bin/sh", Some("exec \"$AEGIS_WSL_EXE\" hook codex"), true)
+}
+
+fn codex_words(exe: &str, hook: Option<&str>, wsl: bool) -> Vec<String> {
+    let args = if wsl {
+        r#"["-c","exec \"$AEGIS_WSL_EXE\" mcp"]"#
+    } else {
+        r#"["mcp"]"#
+    };
+    let env = if wsl {
+        r#"["AEGIS_BUS","AEGIS_TERMINAL","AEGIS_WSL_EXE","WSLENV"]"#
+    } else {
+        r#"["AEGIS_BUS","AEGIS_TERMINAL"]"#
+    };
     let mut values = vec![
         format!("mcp_servers.aegis.command=\"{exe}\""),
-        "mcp_servers.aegis.args=[\"mcp\"]".to_string(),
-        "mcp_servers.aegis.env_vars=[\"AEGIS_BUS\",\"AEGIS_TERMINAL\"]".to_string(),
+        format!("mcp_servers.aegis.args={args}"),
+        format!("mcp_servers.aegis.env_vars={env}"),
         "mcp_servers.aegis.tool_timeout_sec=604800".to_string(),
         // `reply` asks no permission, and only `reply` (docs/specs/agent-protocol.md, 9).
         "mcp_servers.aegis.tools.reply.approval_mode=\"approve\"".to_string(),
     ];
-    if hooks {
-        for (event, timeout) in CODEX_HOOKS {
+    if let Some(hook) = hook {
+        let hook = serde_json::Value::String(hook.to_owned());
+        for (event, timeout) in CODEX_HOOKS
+            .into_iter()
+            .chain(wsl.then_some(("SessionEnd", 5)))
+        {
             values.push(format!(
-                "hooks.{event}=[{{hooks=[{{type=\"command\",command=\"aegis hook codex\",timeout={timeout}}}]}}]"
+                "hooks.{event}=[{{hooks=[{{type=\"command\",command={hook},timeout={timeout}}}]}}]"
             ));
         }
     }
-    Some(
-        values
-            .into_iter()
-            .flat_map(|value| ["-c".to_string(), value])
-            .collect(),
-    )
+    values
+        .into_iter()
+        .flat_map(|value| ["-c".to_string(), value])
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wsl_codex_passes_wslenv_to_mcp_and_hooks_the_sessions_end() {
+        let args = codex_wsl_args();
+        assert!(args.contains(&r#"mcp_servers.aegis.command="/bin/sh""#.to_string()));
+        assert!(args.iter().any(|arg| arg.starts_with("mcp_servers.aegis.env_vars=") && arg.contains("WSLENV")));
+        assert!(
+            args.iter()
+                .any(|arg| arg.starts_with("hooks.SessionEnd=") && arg.contains("$AEGIS_WSL_EXE"))
+        );
+    }
 
     #[test]
     fn codex_gets_the_server_and_its_hooks_in_single_quotes() {

@@ -27,7 +27,18 @@ if [[ -z "${__aegis_installed-}" ]]; then
     # The prompt is printed after PROMPT_COMMAND: A marks its start.
     __aegis_precmd() {
         builtin local status=$?
-        builtin printf '\e]133;D;%s\a\e]7;file://%s%s\a\e]133;A\a' "$status" "${HOSTNAME-}" "${PWD//\%/%25}"
+        builtin local folder="$PWD"
+        if [[ -n "${WSL_DISTRO_NAME-}" && "${AEGIS_WSL_BASH-}" == "${BASH_SOURCE[0]}" ]]; then
+            if [[ "${__aegis_wsl_pwd-}" != "$PWD" ]]; then
+                __aegis_wsl_pwd="$PWD"
+                __aegis_wsl_folder=$(builtin command wslpath -m "$PWD" 2>/dev/null) || __aegis_wsl_folder=
+            fi
+            folder="${__aegis_wsl_folder-}"
+            [[ "$folder" != [A-Za-z]:/* ]] || folder="/$folder"
+        fi
+        builtin printf '\e]133;D;%s\a' "$status"
+        [[ -z "$folder" ]] || builtin printf '\e]7;file://%s%s\a' "${HOSTNAME-}" "${folder//\%/%25}"
+        builtin printf '\e]133;A\a'
         __aegis_ps0
         builtin return "$status"
     }
@@ -50,6 +61,12 @@ if [[ -z "${__aegis_installed-}" ]]; then
     # person's, unless they name Aegis's already (docs/specs/connections.md, "Agents typed in a
     # terminal"). Not over the person's own function; `function` keeps an alias of that name from
     # breaking this.
+    if [[ -n "${WSL_DISTRO_NAME-}" && "${AEGIS_WSL_BASH-}" == "${BASH_SOURCE[0]}" && -r "${AEGIS_WSL_CLAUDE_SETTINGS-}" ]]; then
+        AEGIS_CLAUDE_ARGS=$'--settings\n'"$AEGIS_WSL_CLAUDE_SETTINGS"
+        if [[ -n "${AEGIS_WSL_CLAUDE_MCP-}" && -r "$AEGIS_WSL_CLAUDE_MCP" ]]; then
+            AEGIS_CLAUDE_ARGS+=$'\n--mcp-config='"$AEGIS_WSL_CLAUDE_MCP"
+        fi
+    fi
     __aegis_agent() {
         builtin local name="$1" w="$2" words
         # A variable for this command only, unless the shell has one (the block Aegis opened,

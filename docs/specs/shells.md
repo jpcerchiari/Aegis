@@ -329,18 +329,24 @@ claudinho = { of = "claude", shell = "Git Bash" }                          # an 
 
 ### What works in WSL
 
-An agent set to WSL runs in `wsl.exe`: the default distribution, in its default shell.
+An agent set to WSL opens in the default distribution and shell. Choose **WSL** in the agent's
+Shell setting and open it from the canvas. Claude Code and Codex get the Aegis MCP server and
+hooks when connections and Windows interop are enabled. Bash with shell integration also adds
+these arguments to `claude` and `codex` typed by hand. Claude Code gets the status line when its
+usage setting is enabled.
 
-| Works | Doesn't, and why |
-|---|---|
-| It opens in the folder chosen: `wsl.exe` starts in the Windows folder it is given as `/mnt/c/…` (a `\\wsl.localhost\…` folder as its Linux path; neither checked by hand) | **Aegis's server, hooks, status line and usage**: `Workspace::gives` gives nothing under WSL. Aegis's files are Windows paths, the bus is Windows' loopback, and none of the block's variables (`AEGIS_BUS`, `AEGIS_TERMINAL`…) cross into WSL ([minors](../minors.md#connections)) |
-| Its command, with the model, effort and role words `spawn_agent`'s caller or a role gives (plain words, read the same by every shell) | **Aegis doesn't see the agent**: WSL 2's processes aren't Windows'. No status dot, closing doesn't warn, the block forgets its agent at the next snapshot, so a restart brings back a WSL shell without the agent ([minors](../minors.md#programs-in-a-terminal)) |
-| The block keeps WSL across restarts, undo and paste | **`spawn_agent` and the Aegis Agent refuse it**: its prompt could never be typed, since Aegis never sees it start. "Claude Code (WSL) runs in WSL, where Aegis can't see it start nor type its prompt: open it from the canvas." |
-| | **Accounts**: an account's folder reaches its agent through a variable, which doesn't cross into WSL; the agent would run on WSL's own login. An account's list leaves WSL out, and an account whose `shell` names WSL opens the default ([minors](../minors.md#agent-accounts)) |
+`WSLENV` passes the terminal ID and local bus address in both directions and translates paths
+for Linux. The MCP server, hook and status-line commands call the running Windows executable,
+which uses Windows loopback and writes the relay data on Windows. A session-start hook supplies
+the agent identity and session ID for the canvas, API and persistence. A session-end hook
+clears that identity. Codex may send its start hook only after its first prompt.
 
-**The card's case.** Claude Code set to PowerShell 7 (or Git Bash) keeps all of Aegis: its server, hooks, status
-line, resume by session, accounts. The WSL one is an agent of the person's own: **Add an agent**, Name "Claude Code
-(WSL)", Command `claude`, Shell **WSL**.
+`spawn_agent` can open Claude Code in WSL with agent connections and Bash shell integration
+enabled. It waits for the session-start hook and a stable screen, and types only while the Bash
+command that reported the session is still running. Open Codex from the canvas and enter its
+first prompt yourself. Agent accounts and Stop
+for Linux processes are tracked in the
+[fork guide](../fork/README.md#ponto-de-partida-wsl).
 
 ### Decisions
 

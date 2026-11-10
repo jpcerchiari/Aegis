@@ -23,6 +23,7 @@ pub const RELAY_FLAG: &str = "--claude-statusline";
 const SETTINGS: &str = "claude-statusline.json";
 /// The MCP config the Claude Code Aegis opens is given (`--mcp-config`).
 const MCP: &str = "mcp.json";
+const WSL_BRIDGE: &str = "exec \"$AEGIS_WSL_EXE\"";
 /// What each hook runs after Aegis's program (docs/specs/connections.md, Hooks).
 const HOOK: &str = "hook claude";
 /// The Claude Code hooks Aegis follows a session's turns with.
@@ -236,10 +237,24 @@ pub fn settings_file(
     // is at the path.
     let exe = exe.to_string_lossy();
     let exe = typed_path(exe.strip_suffix(" (deleted)").unwrap_or(&exe), windows)?;
+    let folder = if status_line {
+        typed_path(&data.to_string_lossy(), windows)?
+    } else {
+        String::new()
+    };
+    write_settings(path, &exe, &folder, status_line, hooks)
+}
+
+fn write_settings(
+    path: PathBuf,
+    exe: &str,
+    folder: &str,
+    status_line: bool,
+    hooks: bool,
+) -> Option<PathBuf> {
     let mut settings = serde_json::Map::new();
     if status_line {
         // The relay is told the folder: Claude Code's environment may name another one.
-        let folder = typed_path(&data.to_string_lossy(), windows)?;
         settings.insert(
             "statusLine".into(),
             serde_json::json!({
@@ -285,13 +300,46 @@ pub fn mcp_file(data: &Path, exe: &Path, windows: bool) -> Option<PathBuf> {
     typed_path(&path.to_string_lossy(), windows)?;
     let exe = exe.to_string_lossy();
     let exe = exe.strip_suffix(" (deleted)").unwrap_or(&exe);
-    let config = serde_json::json!({
+    write_mcp(path, exe, None)
+}
+
+fn write_mcp(path: PathBuf, exe: &str, env: Option<serde_json::Value>) -> Option<PathBuf> {
+    let mut config = serde_json::json!({
         "mcpServers": { "aegis": {
             "type": "stdio", "command": exe, "args": ["mcp"], "timeout": crate::MCP_TIMEOUT_MS
         } }
     });
+    if let Some(env) = env {
+        config["mcpServers"]["aegis"]["env"] = env;
+    }
     write_changed(&path, &config)?;
     Some(path)
+}
+
+/// Files written on Windows and read from WSL. The relay writes on Windows, so its data
+/// directory is a Windows path even though Claude reads these files using Linux paths.
+pub fn wsl_files(
+    data: &Path,
+    status_line: bool,
+    hooks: bool,
+) -> Option<(PathBuf, Option<PathBuf>)> {
+    let dir = data.join("wsl");
+    let folder = format!("'{}'", data.to_str()?.replace('\'', "'\\''"));
+    let settings = write_settings(dir.join(SETTINGS), WSL_BRIDGE, &folder, status_line, hooks)?;
+    let mcp = hooks
+        .then(|| {
+            write_mcp(
+                dir.join(MCP),
+                "${AEGIS_WSL_EXE}",
+                Some(serde_json::json!({
+                    "AEGIS_BUS": "${AEGIS_BUS}",
+                    "AEGIS_TERMINAL": "${AEGIS_TERMINAL}",
+                    "WSLENV": "${WSLENV}",
+                })),
+            )
+        })
+        .flatten();
+    Some((settings, mcp))
 }
 
 /// Writes `value` to `path` unless the file already holds it.
@@ -324,14 +372,15 @@ pub fn typed_path(path: &str, windows: bool) -> Option<String> {
 /// The session of the Claude Code `proc`: from the relay's file when it wrote one for this
 /// process, else from Claude Code's transcript.
 pub fn session(proc: &Proc, relay_dir: &Path, claude_dir: Option<&Path>) -> Option<Session> {
-    relayed(proc, relay_dir).or_else(|| transcript(proc, claude_dir?))
+    relayed(&proc.terminal, proc.started, relay_dir).or_else(|| transcript(proc, claude_dir?))
 }
 
-fn relayed(proc: &Proc, relay_dir: &Path) -> Option<Session> {
-    let path = relay_dir.join(format!("{}.json", proc.terminal));
+/// The relay's session for a terminal. A WSL session has a hook timestamp and no Windows PID.
+pub fn relayed(terminal: &str, started: u64, relay_dir: &Path) -> Option<Session> {
+    let path = relay_dir.join(format!("{terminal}.json"));
     // Written for an earlier agent in the same terminal: not this one's. Start times are about
     // a second off on Linux.
-    if modified(&path)? + 2 < proc.started {
+    if modified(&path)? + 2 < started {
         return None;
     }
     let status: Status = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
@@ -485,20 +534,32 @@ const READ_GRACE: Duration = Duration::from_secs(5);
 /// don't run; on an account's folder `config_dir` when given. None for an API key, which has no
 /// plan. Slow: off the UI thread.
 pub fn poll(program: &Path, dir: &Path, config_dir: Option<&Path>, now: u64) -> Option<Limits> {
-    poll_within(program, dir, config_dir, now, (POLL_TIMEOUT, READ_GRACE))
+    poll_within(
+        Command::new(program),
+        dir,
+        config_dir,
+        now,
+        (POLL_TIMEOUT, READ_GRACE),
+    )
+}
+
+/// Asks the Claude Code installed in the default WSL distribution from its login shell's PATH.
+pub fn poll_wsl(wsl: &str, program: &str, dir: &Path, now: u64) -> Option<Limits> {
+    let mut command = Command::new(wsl);
+    command.args(["--exec", "sh", "-lc", "exec \"$@\"", "aegis-usage", program]);
+    poll_within(command, dir, None, now, (POLL_TIMEOUT, READ_GRACE))
 }
 
 /// `poll`, with `(timeout, grace)`: how long Claude Code may take, and how long its output may
 /// take to end after.
 fn poll_within(
-    program: &Path,
+    mut command: Command,
     dir: &Path,
     config_dir: Option<&Path>,
     now: u64,
     (timeout, grace): (Duration, Duration),
 ) -> Option<Limits> {
     std::fs::create_dir_all(dir).ok()?;
-    let mut command = Command::new(program);
     if let Some(config_dir) = config_dir {
         command.env("CLAUDE_CONFIG_DIR", config_dir);
     }
@@ -1052,6 +1113,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn wsl_claude_settings_and_mcp_run_the_windows_bridge() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("Aegis with spaces");
+        let (settings, mcp) = wsl_files(&data, true, true).unwrap();
+        assert_eq!(settings, data.join("wsl").join(SETTINGS));
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(settings).unwrap()).unwrap();
+        assert_eq!(
+            settings["statusLine"]["command"],
+            format!(
+                "exec \"$AEGIS_WSL_EXE\" --claude-statusline '{}'",
+                data.display()
+            )
+        );
+        assert_eq!(
+            settings["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            "exec \"$AEGIS_WSL_EXE\" hook claude"
+        );
+        let mcp: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(mcp.unwrap()).unwrap()).unwrap();
+        assert_eq!(mcp["mcpServers"]["aegis"]["command"], "${AEGIS_WSL_EXE}");
+        assert_eq!(
+            mcp["mcpServers"]["aegis"]["args"],
+            serde_json::json!(["mcp"])
+        );
+        assert_eq!(mcp["mcpServers"]["aegis"]["env"]["WSLENV"], "${WSLENV}");
+        assert!(!data.join(SETTINGS).exists());
+        assert!(!data.join(MCP).exists());
+    }
+
     /// What a new terminal hands the `claude` a person types: the path itself, a space and all.
     #[cfg(unix)]
     #[test]
@@ -1180,7 +1272,10 @@ mod tests {
         let start = Instant::now();
         let within = (Duration::from_secs(30), Duration::from_millis(300));
         let probe = dir.path().join("probe");
-        assert_eq!(poll_within(&program, &probe, None, 5, within), None);
+        assert_eq!(
+            poll_within(Command::new(&program), &probe, None, 5, within),
+            None
+        );
         assert!(start.elapsed() < Duration::from_secs(2));
     }
 

@@ -437,7 +437,13 @@ impl Workspace {
             self.end_turn(terminal, Reply::err(why), cx);
             return false;
         }
-        let seen = pane.seen.pid.is_some() && !pane.shell_in_front();
+        // Claude's SessionStart comes after folder trust. Bash must still report the same
+        // command in front, and a permission or a turn may have arrived since the hook.
+        let seen = pane.agent_seen()
+            && !pane.shell_in_front()
+            && (!pane.term.is_wsl()
+                || pane.seen.agent.as_deref() == Some("claude")
+                    && pane.state == Some(AgentState::Idle));
         let screen = seen.then(|| pane.screen());
         // Windows' console doesn't pass the cursor's mode on: its still screen alone tells.
         let typing = cfg!(windows) || pane.term.shared().modes().typing;

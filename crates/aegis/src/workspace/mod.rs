@@ -262,6 +262,8 @@ pub(crate) struct Pane {
     /// Its folder and its agent as last read: at most a snapshot old (5 s), cheap to ask every
     /// frame. The folder is the start folder until then, and follows each finished command.
     pub seen: aegis_terminal::Inspection,
+    /// The Bash command that was in front when a WSL agent reported its session start.
+    wsl_command: Option<Instant>,
     /// Its agent's session, as last read after a snapshot (docs/specs/usage.md).
     pub usage: Option<aegis_usage::Session>,
     /// Its find field, while open.
@@ -1067,7 +1069,11 @@ impl Space {
                         let uid = self.uids.get(&b.id).cloned().unwrap_or_default();
                         let mut item = pane.item(self.home(b), uid);
                         // What the snapshot compares with the agent it finds there.
-                        item.agent = pane.flags_for.clone().or(item.agent);
+                        if pane.term.is_wsl() && pane.seen.session.is_some() {
+                            item.session = pane.seen.session.clone();
+                        } else {
+                            item.agent = pane.flags_for.clone().or(item.agent);
+                        }
                         let resuming = pane
                             .resuming
                             .as_ref()
@@ -1186,6 +1192,9 @@ impl Space {
         let mut gone = Vec::new();
         for (id, mut seen) in found {
             if let Some(pane) = self.terminal_mut(id) {
+                if pane.term.is_wsl() && pane.seen.session.is_some() {
+                    continue;
+                }
                 // An agent found on a folder is that folder's account, typed by hand or not; an
                 // environment that couldn't be read keeps what the block had. Another agent run in
                 // an account's block (codex in a claude2 block) is on its own folder: the block
@@ -1556,7 +1565,7 @@ pub struct Workspace {
     pub(crate) claude_asked: HashMap<String, u64>,
     /// The `/usage` asks waiting their turn, the next first, and the account whose runs: Claude Code
     /// runs one at a time, so its probes don't hold the background pool's threads.
-    pub(crate) claude_queue: std::collections::VecDeque<usage::Job>,
+    claude_queue: std::collections::VecDeque<usage::Job>,
     pub(crate) claude_probing: Option<String>,
     /// Looks every few seconds for the accounts whose limits are due.
     _claude_poll: Task<()>,

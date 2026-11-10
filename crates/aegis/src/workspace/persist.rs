@@ -191,8 +191,12 @@ impl Workspace {
             return;
         };
         let session = saved.session.as_deref();
-        let kept = match (session, &self.data_dir) {
-            (Some(id), Some(data)) => {
+        let in_wsl = self
+            .space
+            .terminal(id)
+            .is_some_and(|pane| pane.term.is_wsl());
+        let kept = match (session, &self.data_dir, in_wsl) {
+            (Some(id), Some(data), false) => {
                 let (of, home) = match &agent.account {
                     Some(a) => (a.kind.agent, Some(a.kind.state_dir(&a.folder))),
                     None => (agent.id.as_str(), None),
