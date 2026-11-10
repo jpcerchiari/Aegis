@@ -483,18 +483,25 @@ fn extra_variables_reach_the_shell() {
     );
 }
 
-/// A harmless long-running program, copied under an agent's name into `bin`.
+/// A harmless long-running program under an agent's name in `bin`, waiting the seconds it's given.
 fn fake_claude(bin: &std::path::Path) -> std::path::PathBuf {
-    #[cfg(unix)]
-    let (from, to) = (
-        ["/bin/sleep", "/usr/bin/sleep"]
-            .into_iter()
-            .find(|p| std::path::Path::new(p).exists())
-            .expect("sleep"),
-        bin.join("claude"),
-    );
+    let to = bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
+    // On Linux a script: `sleep` may be the uutils multicall binary (Ubuntu 25.10 on), which runs
+    // the tool named after itself, so a copy named `claude` quits at once.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(&to, "#!/bin/sh\nsleep \"$1\"\n").unwrap();
+        std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    let from = ["/bin/sleep", "/usr/bin/sleep"]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .expect("sleep");
     #[cfg(windows)]
-    let (from, to) = (r"C:\Windows\System32\cmd.exe", bin.join("claude.exe"));
+    let from = r"C:\Windows\System32\cmd.exe";
+    #[cfg(not(target_os = "linux"))]
     std::fs::copy(from, &to).unwrap();
     to
 }

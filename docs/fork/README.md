@@ -109,6 +109,10 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
   formatação, licenças, Windows e macOS passaram. O Linux compilou e passou no Clippy. Dos 3.442
   testes Linux, `inspect_finds_an_agent_the_shell_started` falhou nas três tentativas e
   `inspect_finds_an_agent_and_its_folder` passou na terceira. Os doctests de Linux ficaram pendentes.
+  **Causa (2026-11-10):** o `ubuntu-latest` passou a ser o Ubuntu 26.04, cujo `sleep` é o binário único
+  do uutils, que escolhe a ferramenta pelo próprio nome: a cópia chamada `claude` sai na hora com
+  `coreutils: unknown program 'claude'`. No Linux, o `fake_claude` de `tests/spawn.rs` passou a ser um
+  script `#!/bin/sh` que chama `sleep`, que o sistema vê com o nome `claude`.
   O [ensaio de release](https://github.com/jpcerchiari/Aegis/actions/runs/42682578389) empacotou os cinco
   alvos. A etapa de publicação ficou de fora porque o disparo foi manual.
 - **Linha de base local no Mac Apple Silicon:** Rust 1.99.0. Formatação, build do workspace
@@ -328,10 +332,6 @@ Só a ideia; nada de código (BUSL-1.1).
 2. **Linha de base antes de mudar a integração no Windows:** abrir com `cargo run -p aegis -- --dev`
    e executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`
    e `cargo test --workspace --locked`. O CI já verifica as três plataformas (decisão 27).
-   Para isolar a falha vista no Linux em `fd6564a`, rodar
-   `cargo test -p aegis-terminal --locked --test spawn inspect_finds_an_agent_the_shell_started -- --exact --nocapture`.
-   Se falhar, capturar a saída do PTY e os PIDs do shell e do grupo de primeiro plano antes de
-   atribuir a falha ao timeout ou alterar a inspeção.
 3. **Publicar um release** (decisão 25):
    1. em `Cargo.toml`, `[workspace.package]`, mudar `version`; depois `cargo update --workspace`, que
       só atualiza as entradas do próprio Aegis no `Cargo.lock`;
