@@ -128,7 +128,7 @@ O próprio autor já documentou as lacunas: a seção *What works in WSL* em `do
 várias entradas em `docs/minors.md`. Hoje, um agente marcado com o shell WSL roda em `wsl.exe`, sempre
 na distribuição padrão e no shell padrão dela.
 
-| O que não funciona | Onde está no código | Correção sugerida pelo autor |
+| Lacuna no ponto de partida | Onde estava no código | Correção sugerida pelo autor |
 |---|---|---|
 | Servidor do Templum, hooks, status line e medidor de uso: o agente no WSL não recebe nada disso | `Workspace::gives` (`crates/aegis/src/workspace/usage.rs:245`) devolve `None` quando o shell é `wsl` | Listar `AEGIS_BUS`, `AEGIS_TERMINAL` e os `AEGIS_*_ARGS` em `WSLENV` (com `/p` nos caminhos); passar os arquivos do Claude Code e do Codex como caminhos `/mnt/c/…`; rodar a ponte MCP como `aegis.exe` pelo interop, que alcança o loopback do Windows |
 | O Templum não vê o agente: sem bolinha de status, sem aviso ao fechar o bloco, e o agente some na reinicialização | `aegis_terminal::inspect` só lê processos do Windows; o snapshot fica em `Space::see` (`crates/aegis/src/workspace/mod.rs`) | Ler os processos da distribuição (`wsl.exe -e ps -o pid,args`, ou `\\wsl.localhost\<distro>\proc`) e casar com o bloco pela sessão do shell |
@@ -142,7 +142,34 @@ Arquivos que mais mencionam WSL: `aegis-terminal/src/integration.rs`, `workspace
 
 ### O que o primeiro PR mexe (decisão 9)
 
-Levantamento no código do commit `fd6564a`. Os passos abaixo ainda precisam de um Windows com WSL.
+**Progresso no PC pessoal (2026-11-09).** Ubuntu é a distribuição padrão no WSL 2. O Claude Code
+2.1.311 foi instalado no Ubuntu. O build nativo passou com Rust 1.99.0, MSVC e Windows SDK. O teste em
+ConPTY abriu a distribuição em uma pasta com espaços, preservou uma entrada própria de `WSLENV`
+e confirmou que um executável Windows chamado do Linux recebe o ID correto do bloco.
+No Aegis compilado, dois blocos WSL na mesma pasta receberam hooks de teste separados e
+`aegis.exe whoami` alcançou o barramento do Windows. Um bloco PowerShell serviu de controle.
+O snapshot seguinte manteve os dois IDs de sessão, e o `SessionEnd` limpou só o bloco que o
+enviou. O relay da linha de status publicou o
+uso do bloco na API. Um agente simulado recebeu um único prompt após o hook de início. Ao
+reabrir o perfil de teste, o Aegis emitiu `claude --resume` com o ID salvo antes do fechamento.
+
+Formatação e Clippy passaram. A suíte do aplicativo teve 2.073 testes aprovados, um ignorado e
+uma falha em `shortcuts_open_and_close_terminals` na asserção da animação da câmera. O teste
+passou depois, rodado isoladamente tanto no `HEAD` quanto no código com a integração WSL.
+Nas demais crates, `a_noise_flood_never_rotates_the_calls` falhou em lote e passou isoladamente.
+
+O código usa `WSLENV` com `/p` para os caminhos lidos pelo Linux. O Bash da distribuição reutiliza
+a integração de terminal para os comandos digitados e chama `wslpath` para informar a pasta em
+formato Windows. A identidade de Claude Code e Codex vem dos hooks e entra no snapshot do canvas.
+O relay do Claude Code lê o uso por bloco sem exigir um PID Windows. A consulta a `/usage`
+retornou os limites da conta autenticada usando o Claude instalado no Ubuntu. O teste interativo
+confirmou que `SessionStart` vem depois da confiança na pasta e antes do primeiro prompt. O
+`UserPromptSubmit` registrou um envio, e o limite da conta impediu a resposta do modelo. O
+`spawn_agent` usa esse hook e a integração do Bash para confirmar prontidão no Claude Code.
+Para Codex, a prontidão do primeiro prompt continua pendente. Stop e contas fazem parte da
+segunda etapa.
+
+O levantamento abaixo partiu do commit `fd6564a` e registra a sequência e os critérios de teste.
 
 1. **Transportar a configuração.** Em `Terminal::spawn`, somar ao `WSLENV` existente apenas as
    variáveis usadas pelo bloco WSL, incluindo `AEGIS_BUS` e `AEGIS_TERMINAL`. Preservar o `PATH`

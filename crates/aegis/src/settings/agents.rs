@@ -354,8 +354,8 @@ pub(crate) fn agent_dialog(
                             div()
                                 .id("agent-shell-wsl")
                                 .child(default(
-                                    "In WSL the agent gets none of Aegis's tools, hooks or \
-                                     status line, and isn't resumed after a restart."
+                                    "Claude Code and Codex use Aegis's tools and hooks in the \
+                                     default WSL distribution when Windows interop is enabled."
                                         .to_string(),
                                 ))
                                 .test_support(),

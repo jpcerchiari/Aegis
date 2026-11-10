@@ -56,6 +56,100 @@ fn runs_a_command_and_reports_its_exit() {
     assert!(!term.title().trim().is_empty());
 }
 
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a default WSL distribution with Windows interop enabled"]
+fn wsl_terminal_forwards_its_id_to_a_windows_child() {
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("project with spaces");
+    std::fs::create_dir(&folder).unwrap();
+    let script = concat!(
+        "set -e; test \"$AEGIS_TEST_KEEP\" = custom; ",
+        "test -n \"$AEGIS_TERMINAL\"; test \"${PWD##*/}\" = 'project with spaces'; ",
+        "cmd.exe /d /c echo %AEGIS_TERMINAL%"
+    );
+    let term = Terminal::spawn(
+        SpawnOptions {
+            cols: 120,
+            rows: 20,
+            cell_px: (8, 16),
+            command: Some((
+                "wsl.exe".into(),
+                ["--exec", "sh", "-c", script].map(str::to_owned).to_vec(),
+            )),
+            palette: Palette::default(),
+            options: TermOptions::default(),
+            working_directory: Some(folder),
+            integration: None,
+            env: vec![
+                ("WSLENV".into(), "AEGIS_TEST_KEEP/u".into()),
+                ("AEGIS_TEST_KEEP".into(), "custom".into()),
+            ],
+        },
+        Arc::new(|| {}),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !term.exited() {
+        assert!(Instant::now() < deadline, "WSL did not exit");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut snapshot = Snapshot::default();
+    snapshot.refresh(term.shared(), &Palette::default());
+    assert!(
+        snapshot.text().lines().any(|line| line.trim() == term.id()),
+        "{:?}",
+        snapshot.text()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a default WSL distribution whose login shell is Bash"]
+fn wsl_bash_loads_the_agent_wrappers_and_translated_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let integration = aegis_terminal::install(tmp.path()).unwrap();
+    let settings = tmp.path().join("Claude settings.json");
+    std::fs::write(&settings, "{}").unwrap();
+    let term = Terminal::spawn(
+        SpawnOptions {
+            cols: 120,
+            rows: 20,
+            cell_px: (8, 16),
+            command: Some(("wsl.exe".into(), Vec::new())),
+            palette: Palette::default(),
+            options: TermOptions::default(),
+            working_directory: Some(tmp.path().to_owned()),
+            integration: Some(integration),
+            env: vec![(
+                "AEGIS_WSL_CLAUDE_SETTINGS".into(),
+                settings.to_string_lossy().into_owned(),
+            )],
+        },
+        Arc::new(|| {}),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while term.processes().reported.is_none() && !term.exited() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    term.write(b"printf 'wrapper-%s-%s\\n' \"$(type -t claude)\" \"$(test -r \"$AEGIS_WSL_CLAUDE_SETTINGS\" && echo readable)\"; exit\r".to_vec());
+    while !term.exited() {
+        assert!(Instant::now() < deadline, "WSL did not exit");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut snapshot = Snapshot::default();
+    snapshot.refresh(term.shared(), &Palette::default());
+    assert!(
+        snapshot
+            .text()
+            .lines()
+            .any(|line| line.trim() == "wrapper-function-readable"),
+        "{:?}",
+        snapshot.text()
+    );
+}
+
 #[test]
 fn shells_start_in_the_home_directory() {
     let home = std::env::home_dir().expect("a home directory");

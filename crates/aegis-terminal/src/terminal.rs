@@ -1153,6 +1153,26 @@ impl Terminal {
             env.insert("PATH".into(), path);
         }
         env.extend(opts.env.iter().cloned());
+        #[cfg(windows)]
+        if shell_name.eq_ignore_ascii_case("wsl") {
+            if let Some((_, args)) = command.as_mut()
+                && args.is_empty()
+                && let Some(dir) = &opts.integration
+            {
+                env.insert(
+                    "AEGIS_WSL_BASH".into(),
+                    dir.join("aegis.bash").to_string_lossy().into_owned(),
+                );
+                args.extend(["--exec", "sh", "-c"].map(str::to_string));
+                args.push(include_str!("integration/wsl.sh").replace("\r\n", "\n"));
+            }
+            let inherited = env
+                .get("WSLENV")
+                .cloned()
+                .or_else(|| std::env::var("WSLENV").ok())
+                .unwrap_or_default();
+            env.insert("WSLENV".into(), wsl_env(&inherited, &env));
+        }
         if let Some(dir) = &opts.integration {
             // Without a command, alacritty runs $SHELL: as a login shell on macOS.
             let (program, args) = command.clone().unwrap_or_else(|| {
@@ -1331,6 +1351,11 @@ impl Terminal {
             foreground: self.foreground(),
             reported: self.shared.folder.lock().unwrap().clone(),
         }
+    }
+
+    /// Whether this terminal launched the Windows Subsystem for Linux.
+    pub fn is_wsl(&self) -> bool {
+        cfg!(windows) && self.shell_name.eq_ignore_ascii_case("wsl")
     }
 
     /// Its shell's processes ([`shells_of`]): empty once it exited.
@@ -1675,6 +1700,36 @@ fn file_stem(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+#[cfg(any(windows, test))]
+fn wsl_env(inherited: &str, env: &HashMap<String, String>) -> String {
+    let block_vars = [
+        ("AEGIS_BUS", "AEGIS_BUS"),
+        ("AEGIS_TERMINAL", "AEGIS_TERMINAL"),
+        ("AEGIS_CLAUDE_ARGS", "AEGIS_CLAUDE_ARGS"),
+        ("AEGIS_CODEX_ARGS", "AEGIS_CODEX_ARGS"),
+        ("AEGIS_WSL_EXE", "AEGIS_WSL_EXE/p"),
+        ("AEGIS_WSL_CLAUDE_SETTINGS", "AEGIS_WSL_CLAUDE_SETTINGS/p"),
+        ("AEGIS_WSL_CLAUDE_MCP", "AEGIS_WSL_CLAUDE_MCP/p"),
+        ("AEGIS_WSL_BASH", "AEGIS_WSL_BASH/p"),
+    ]
+    .into_iter()
+    .filter(|(name, _)| env.contains_key(*name))
+    .collect::<Vec<_>>();
+    // The bus and terminal ID must also reach the Windows executable called from Linux.
+    inherited
+        .split(':')
+        .filter(|entry| !entry.is_empty())
+        .filter(|entry| {
+            let name = entry.split('/').next().unwrap_or_default();
+            !block_vars
+                .iter()
+                .any(|(var, _)| var.eq_ignore_ascii_case(name))
+        })
+        .chain(block_vars.iter().map(|&(_, entry)| entry))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 /// The process group `tcgetpgrp` answered, when there is one: it says 0 (macOS, once the shell
 /// has ended) or less when there is none.
 #[cfg(any(unix, test))]
@@ -1732,6 +1787,28 @@ pub(crate) fn feed_heard(term: &SharedTerm, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wsl_forwards_block_variables_in_both_directions_without_replacing_user_entries() {
+        let env = HashMap::from([
+            ("AEGIS_BUS".into(), "address".into()),
+            ("AEGIS_TERMINAL".into(), "123-4".into()),
+            (
+                "AEGIS_CLAUDE_ARGS".into(),
+                "--settings\n/mnt/c/a b/settings.json".into(),
+            ),
+            ("AEGIS_CODEX_ARGS".into(), String::new()),
+            ("AEGIS_WSL_EXE".into(), "C:\\Aegis build\\aegis.exe".into()),
+            ("PATH".into(), "C:\\Windows".into()),
+        ]);
+        assert_eq!(
+            wsl_env("CUSTOM/p:AEGIS_BUS/w:OTHER/u", &env),
+            concat!(
+                "CUSTOM/p:OTHER/u:AEGIS_BUS:AEGIS_TERMINAL:",
+                "AEGIS_CLAUDE_ARGS:AEGIS_CODEX_ARGS:AEGIS_WSL_EXE/p"
+            )
+        );
+    }
 
     #[cfg(windows)]
     #[test]

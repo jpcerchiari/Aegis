@@ -404,6 +404,10 @@ response that sends nothing for 100 seconds:** through it, hand the task without
 
 ### Events
 
+On Windows, Claude Code and Codex running in WSL publish their hook-driven agent status in the
+same `block` events as native agents. The WSL block needs Windows interop and enabled agent
+connections. An agent becomes visible after its `SessionStart` hook reaches Aegis.
+
 `GET /v1/events` is Server-Sent Events (`text/event-stream`). It opens with `event: snapshot` (the state, as the token
 sees it), then one event per change, named for the collection, singular (`workspace`, `block`, `wire` with the id `a-b`
 (its two block ids sorted), `request`, `board`, `card`, `note`, `checklist`, `drawing` (the workspace's id),

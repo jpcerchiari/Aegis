@@ -713,12 +713,19 @@ fn hook(args: &[String], env: &Env, stdin: &mut dyn Read, stdout: &mut dyn Write
         return;
     };
     if let Some(event) = event {
-        let Some(line) = serde_json::to_value(event)
-            .ok()
-            .map(|event| rpc::notification(hooks::METHOD, event))
-        else {
+        let session_event = matches!(event, hooks::AgentEvent::Started | hooks::AgentEvent::Ended);
+        let Ok(mut event) = serde_json::to_value(event) else {
             return;
         };
+        if session_event && let Some(session) = input["session_id"].as_str() {
+            event["agent"] = json!(agent);
+            event["session_id"] = json!(session);
+            // A Windows bridge launched by WSL receives the current directory as a Windows path.
+            if let Ok(folder) = std::env::current_dir() {
+                event["folder"] = json!(folder.to_str());
+            }
+        }
+        let line = rpc::notification(hooks::METHOD, event);
         if stream.write_all(line.as_bytes()).is_err() {
             return;
         }

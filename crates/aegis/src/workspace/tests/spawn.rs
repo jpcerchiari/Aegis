@@ -135,14 +135,14 @@ fn spawn_agent_opens_a_wired_agent_beside_the_caller(cx: &mut TestAppContext) {
     assert!(failed && text.contains("isn't a folder"), "{text}");
 }
 
-/// Aegis never sees an agent in WSL start, so it could not type its prompt: the Aegis Agent's
-/// open shares the refusal (`Workspace::spawn_problem`).
+/// Aegis refuses WSL targets when shell integration cannot confirm readiness.
 #[gpui_kit::test]
-fn spawn_agent_refuses_an_agent_that_runs_in_wsl(cx: &mut TestAppContext) {
+fn spawn_agent_refuses_wsl_without_shell_integration(cx: &mut TestAppContext) {
     let (handle, ws, mine) = spawner(cx);
     let (terminal, _) = me(&ws, cx, mine);
     super::agents::agent_shells(&ws, cx);
     ws.update(cx, |ws, _| {
+        ws.config.shell.integration = false;
         let claude = ws.agents.iter_mut().find(|a| a.id == "claude").unwrap();
         claude.shell = Some("WSL".into());
     });
@@ -161,9 +161,29 @@ fn spawn_agent_refuses_an_agent_that_runs_in_wsl(cx: &mut TestAppContext) {
     assert!(failed, "{text}");
     assert_eq!(
         text,
-        "Claude Code runs in WSL, where Aegis can't see it start nor type its prompt: open it from the canvas."
+        "Claude Code runs in WSL, where Aegis can't confirm prompt readiness: open it from the canvas."
     );
     assert_eq!(blocks(&ws, cx), before, "no block opened");
+}
+
+#[cfg(windows)]
+#[gpui_kit::test]
+fn only_claude_can_be_spawned_in_wsl_with_its_readiness_signals_enabled(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let (_, ws) = open_in(cx, None, Some(data.path().to_owned()));
+    super::agents::agent_shells(&ws, cx);
+    ws.update(cx, |ws, _| {
+        ws.config.shell.integration = true;
+        ws.config.connections.enabled = true;
+        let mut claude = ws.agents.iter().find(|a| a.id == "claude").unwrap().clone();
+        claude.shell = Some("WSL".into());
+        let mut codex = ws.agents.iter().find(|a| a.id == "codex").unwrap().clone();
+        codex.shell = Some("WSL".into());
+        assert_eq!(ws.spawn_problem(&claude), None);
+        assert!(ws.spawn_problem(&codex).is_some());
+        ws.config.connections.enabled = false;
+        assert!(ws.spawn_problem(&claude).is_some());
+    });
 }
 
 /// The model and the effort go right after the agent's command (`cat` here), before what Aegis

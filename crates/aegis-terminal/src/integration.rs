@@ -19,6 +19,7 @@ const FILES: [(&str, &str); 4] = [
 pub fn install(dir: &Path) -> io::Result<PathBuf> {
     let root = dir.join("shell-integration");
     for (name, text) in FILES {
+        let text = text.replace("\r\n", "\n");
         let path = root.join(name);
         if std::fs::read_to_string(&path).is_ok_and(|t| t == text) {
             continue;
@@ -27,7 +28,7 @@ pub fn install(dir: &Path) -> io::Result<PathBuf> {
         std::fs::create_dir_all(parent)?;
         // Beside it, then renamed over it: a shell starting meanwhile reads a whole one.
         let temp = parent.join(format!(".{}.{}", std::process::id(), file_name(&path)));
-        std::fs::write(&temp, text)?;
+        std::fs::write(&temp, &text)?;
         std::fs::rename(&temp, &path)?;
     }
     Ok(root)
@@ -1432,7 +1433,10 @@ mod tests {
         let root = install(d.path()).unwrap();
         assert_eq!(root, d.path().join("shell-integration"));
         for (name, text) in FILES {
-            assert_eq!(std::fs::read_to_string(root.join(name)).unwrap(), text);
+            assert_eq!(
+                std::fs::read_to_string(root.join(name)).unwrap(),
+                text.replace("\r\n", "\n")
+            );
         }
         let bash = root.join("aegis.bash");
         std::fs::write(&bash, "old").unwrap();
@@ -1443,7 +1447,7 @@ mod tests {
         install(d.path()).unwrap();
         assert_eq!(
             std::fs::read_to_string(&bash).unwrap(),
-            FILES[0].1,
+            FILES[0].1.replace("\r\n", "\n"),
             "rewritten"
         );
         let after = std::fs::metadata(root.join("aegis.fish"))

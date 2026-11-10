@@ -627,12 +627,21 @@ impl Workspace {
             .collect();
     }
 
-    /// Why `spawn_agent` and the Aegis Agent can't open the agent `entry`: it runs in WSL,
-    /// where Aegis can't see it start nor type its prompt, or it isn't installed here.
+    /// Why `spawn_agent` and the Aegis Agent can't open `entry`. Claude Code in WSL needs the
+    /// hook and shell integration to tell `look_ready` when it can take an automatic prompt.
     pub(crate) fn spawn_problem(&self, entry: &AgentEntry) -> Option<String> {
         if self.in_wsl(entry) {
+            if cfg!(windows)
+                && entry.builtin == Some(aegis_terminal::Agent::CLAUDE)
+                && entry.account.is_none()
+                && self.wsl_connected()
+                && self.config.shell.integration
+                && self.integration.is_some()
+            {
+                return None;
+            }
             Some(format!(
-                "{} runs in WSL, where Aegis can't see it start nor type its prompt: open it from the canvas.",
+                "{} runs in WSL, where Aegis can't confirm prompt readiness: open it from the canvas.",
                 entry.title
             ))
         } else if !aegis_terminal::installed(entry.program()) {
@@ -1386,6 +1395,7 @@ impl Pane {
                 folder: start,
                 ..Default::default()
             },
+            wsl_command: None,
             usage: None,
             find: None,
             state: None,
