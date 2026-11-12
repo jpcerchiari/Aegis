@@ -51,6 +51,7 @@ fn schemas() -> Value {
     json!({
         "State": view(&[
             ("app", r("App")),
+            ("power", r("PowerView")),
             ("workspaces", array(r("WorkspaceView"))),
             ("blocks", array(r("BlockView"))),
             ("wires", array(r("WireView"))),
@@ -69,6 +70,11 @@ fn schemas() -> Value {
             ("version", s()),
             ("api", i()),
             ("shown", maybe("string")),
+        ]),
+        "PowerView": view(&[
+            ("requested", b()),
+            ("preventing_idle_sleep", b()),
+            ("error", maybe("string")),
         ]),
         "WorkspaceView": view(&[
             ("id", s()),
@@ -823,6 +829,11 @@ mod tests {
     /// One of everything, every option Some and every list one item long.
     fn full_state() -> State {
         State {
+            power: PowerView {
+                requested: true,
+                preventing_idle_sleep: false,
+                error: Some("The system refused idle sleep prevention.".into()),
+            },
             app: App {
                 version: "0.1.5".into(),
                 api: 1,

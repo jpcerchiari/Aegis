@@ -1296,7 +1296,7 @@ fn home_agent(state: &str) -> aegis_api::model::AgentView {
 }
 
 /// An offline mirror whose home runs Claude Code in `abcde`, in the state `state`, not shown.
-fn mirrored_agent(
+pub(super) fn mirrored_agent(
     cx: &mut TestAppContext,
     state: &str,
 ) -> (AnyWindowHandle, Entity<Workspace>, tempfile::TempDir) {

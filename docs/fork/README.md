@@ -1,6 +1,6 @@
 # Aegis, fork do Templum: estado do trabalho
 
-Atualizado em 2026-11-09. O Aegis é o Templum (MIT) com outro nome e as mudanças deste fork. Este
+Atualizado em 2026-11-12. O Aegis é o Templum (MIT) com outro nome e as mudanças deste fork. Este
 arquivo reúne as decisões, o que já foi feito e o que falta. A memória do Claude Code fica na
 máquina onde a sessão rodou e não vem junto, então **numa sessão nova, comece lendo este arquivo
 inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
@@ -90,6 +90,20 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
 | 31 | O diálogo de pareamento tem os campos do *New token…* (nome, alcance, workspaces, validade), com a validade em **90 dias** por padrão. Vencido, o celular é pareado de novo pelo QR 2 | Escolha do usuário: um celular perdido e esquecido para de entrar sozinho em três meses, e parear de novo é rápido | Vale desde 2026-11-12 |
 
 ## Feito
+
+- **Manter o computador acordado durante o trabalho dos agentes** (item 3 da decisão 18).
+  O Aegis pede ao sistema que impeça a suspensão automática enquanto algum agente local trabalha,
+  inclusive em workspaces ocultos e com subagentes em segundo plano. O Aegis Agent também conta.
+  Pedidos de aprovação mantêm o computador acordado para a resposta pelo celular. Quando todos
+  ficam ociosos, o pedido é liberado, assim como ao parar o workspace ou fechar o aplicativo.
+  `workspace/power.rs` reutiliza `prevent_idle_sleep` do GPUI nos três sistemas, sem dependência
+  nova. Falhas aparecem em `power.error` na API e no log, com nova tentativa após o trabalho
+  ficar ocioso e recomeçar. `GET /v1/state` e o evento `power` mostram o estado.
+  Verificado no Mac com sete testes do comportamento, os 329 testes da API, build e Clippy.
+  Um ensaio do aplicativo confirmou no `pmset` que o macOS registra o bloqueio e o remove ao
+  encerrar. A suíte completa repetiu as duas falhas locais de processos órfãos já registradas
+  abaixo. O bloqueio real no Windows e no Linux ainda precisa ser conferido.
+  O próximo item de desenvolvimento é a paleta de comandos.
 
 - **Comparação entre nodeterm e Templum.** O nodeterm é mais maduro, mas é BUSL-1.1, tem plano pago
   a caminho (limite de 5 projetos abertos, US$ 10/mês no Pro) e passa pelo relay deles no celular. O

@@ -12,6 +12,9 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct State {
     pub app: App,
+    /// This computer's idle sleep inhibition, absent on older hosts.
+    #[serde(default)]
+    pub power: PowerView,
     pub workspaces: Vec<Arc<WorkspaceView>>,
     pub blocks: Vec<Arc<BlockView>>,
     pub wires: Vec<Arc<WireView>>,
@@ -59,6 +62,15 @@ pub struct App {
     pub api: u32,
     /// The workspace on screen.
     pub shown: Option<String>,
+}
+
+/// Machine-wide power status. It contains no workspace or agent identifiers.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PowerView {
+    /// Local work is requesting idle sleep inhibition, even if acquisition failed.
+    pub requested: bool,
+    pub preventing_idle_sleep: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -661,6 +673,7 @@ impl State {
                     .filter(|shown| caller.sees(Some(shown))),
                 ..self.app.clone()
             },
+            power: self.power.clone(),
             workspaces: self
                 .workspaces
                 .iter()
@@ -857,6 +870,7 @@ impl State {
                 | "automation"
                 | "schedule"
                 | "share"
+                | "power"
                 | "usage"
         )
     }
@@ -881,6 +895,13 @@ impl State {
             "automation" => edit(event, data, |s| &mut s.automations, |a| a.id.to_string()),
             "schedule" => edit(event, data, |s| &mut s.schedules, |s| s.id.clone()),
             "share" => edit(event, data, |s| &mut s.shares, |s| s.id.clone()),
+            "power" => {
+                let change = Edit::read(event, data, |_: &PowerView| "power".into())?;
+                Ok(Box::new(move |state| {
+                    let new = change.put.unwrap_or_default();
+                    Ok(std::mem::replace(&mut state.power, new) != state.power)
+                }))
+            }
             "usage" => {
                 // At most one, with the id `usage`.
                 let one = Edit::<UsageView>::read(event, data, |_| "usage".into())?;
@@ -997,10 +1018,17 @@ pub struct Delta {
     pub value: Option<Value>,
 }
 
-/// What differs between two states, per collection (workspace, block, wire, request, board, card,
-/// note, checklist, drawing, automation, schedule, share, usage): the deletes, then the puts.
+/// What differs between two states, per collection (power, workspace, block, wire, request, board,
+/// card, note, checklist, drawing, automation, schedule, share, usage): deletes, then puts.
 pub fn diff(old: &State, new: &State) -> Vec<Delta> {
     let mut out = Vec::new();
+    compare(
+        "power",
+        std::slice::from_ref(&old.power),
+        std::slice::from_ref(&new.power),
+        |_| "power".into(),
+        &mut out,
+    );
     compare(
         "workspace",
         &old.workspaces,

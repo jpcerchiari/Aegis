@@ -200,7 +200,7 @@ inside those workspaces' folders (`recent_folders`).
 
 | Path | Answers |
 |---|---|
-| `GET /v1/state` | The whole state: `app`, `workspaces`, `blocks`, `wires`, `requests`, `boards`, `cards`, `notes`, `checklists`, `drawings`, `automations`, `schedules`, `shares`, `usage`, `view` |
+| `GET /v1/state` | The whole state: `app`, `power`, `workspaces`, `blocks`, `wires`, `requests`, `boards`, `cards`, `notes`, `checklists`, `drawings`, `automations`, `schedules`, `shares`, `usage`, `view` |
 | `GET /v1/workspaces`, `/{workspace}` | Workspaces in the sidebar's order |
 | `GET /v1/blocks`, `/{block}` | Blocks, back to front; `?workspace=w3` filters |
 | `GET /v1/agents` | The blocks running an agent, with its state |
@@ -221,6 +221,17 @@ Ids are Aegis's own: block ids (`b7k2m`), workspace ids (`w3`), board, card, col
 automation numbers; a request is `r<n>` (the inbox's; `n` starts at the Unix time in milliseconds when Aegis starts, so
 a restarted Aegis never reuses a request id a mirror may still hold) or `a<n>` (the Aegis Agent's approvals). Times
 are Unix seconds.
+
+The `power` object reports this computer's idle sleep inhibition. `requested` means a local agent
+has work or an approval pending, `preventing_idle_sleep` confirms the system granted the request,
+and `error` holds a failure message or null. This machine-wide status is available to
+workspace-limited tokens too, without agent or workspace identifiers. Older hosts omit it.
+
+Aegis prevents idle system sleep automatically while local terminal agents or the Aegis Agent have
+work or approvals pending, including hidden workspaces and background subagents. It releases
+the request when that work ends, its workspace stops or Aegis closes. Remote agents run on their own
+computer. Manual suspension, laptop lids and critical battery conditions follow the OS's policy.
+An acquisition failure is reported in `power.error`; a later turn can try again.
 
 **Workspaces and the Home.** A workspace has `opened`, when it was last opened (shown) in Aegis, in Unix seconds:
 null for one not opened since Aegis kept it. It is what the Home's cards say ("Opened 3 h ago"); the Home's other
@@ -423,7 +434,7 @@ connections. An agent becomes visible after its `SessionStart` hook reaches Aegi
 `GET /v1/events` is Server-Sent Events (`text/event-stream`). It opens with `event: snapshot` (the state, as the token
 sees it), then one event per change, named for the collection, singular (`workspace`, `block`, `wire` with the id `a-b`
 (its two block ids sorted), `request`, `board`, `card`, `note`, `checklist`, `drawing` (the workspace's id),
-`automation`, `schedule` (`s3`), `share` (`s4`), `usage` with the id `usage`):
+`automation`, `schedule` (`s3`), `share` (`s4`), `usage` with the id `usage`, and `power` with the id `power`):
 
 ```
 id: 8f3a1c20-1042

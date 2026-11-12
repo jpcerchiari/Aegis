@@ -60,6 +60,7 @@ pub fn sample() -> State {
         ..Default::default()
     };
     State {
+        power: Default::default(),
         app: App {
             version: "0.1.5".into(),
             api: 1,

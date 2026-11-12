@@ -53,6 +53,7 @@ impl Workspace {
         );
         let spaces = self.order();
         State {
+            power: self.power_view(),
             app: AppView {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 api: 1,

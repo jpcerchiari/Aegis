@@ -38,6 +38,7 @@ mod input;
 mod note_tabs;
 mod ops;
 mod persist;
+mod power;
 mod preferences;
 mod questions;
 pub(crate) mod remote;
@@ -1380,6 +1381,8 @@ pub(crate) type FrameHook =
     Box<dyn FnMut(&mut Workspace, &mut Window, &mut Context<Workspace>) -> bool>;
 
 pub struct Workspace {
+    /// The system's idle sleep inhibition while local agents work.
+    power: power::Power,
     /// The workspace on screen.
     pub(crate) space: Space,
     /// The hidden ones, in the sidebar's order without the active one. Their terminals run on.
@@ -1966,7 +1969,9 @@ impl Workspace {
             tx: bus_tx,
         } = bus::start(data_dir.as_deref(), window, cx);
         let data_dir_for_keys = data_dir.clone();
+        cx.observe_self(|ws, cx| ws.update_power(cx)).detach();
         let mut ws = Self {
+            power: power::Power::default(),
             space: Space::default(),
             others: Vec::new(),
             active: 0,
