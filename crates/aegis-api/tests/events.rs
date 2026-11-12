@@ -68,6 +68,37 @@ fn a_stream_starts_with_a_snapshot() {
 }
 
 #[test]
+fn power_status_changes_reach_a_limited_tokens_event_stream() {
+    let (text, token) = token(Scope::Read, Some(vec!["w3"]));
+    let fake = fake(vec![token], |_| {});
+    let stream = open(&fake, "/v1/events", Auth::Bearer(&text), None);
+    let initial = stream.event();
+    let mut old: State = serde_json::from_value(initial.data.clone()).unwrap();
+    let mut state = serde_json::to_value(&old).unwrap();
+    state["power"] = json!({
+        "requested": true,
+        "preventing_idle_sleep": true,
+        "error": null
+    });
+    let state: State = serde_json::from_value(state).unwrap();
+    let differences = aegis_api::model::diff(&old, &state);
+    assert_eq!(differences.len(), 1);
+    assert_eq!(differences[0].kind, "power");
+    fake.server.publish(state);
+    let change = stream.event();
+    assert_eq!(change.event, "power");
+    assert_eq!(change.data["value"]["preventing_idle_sleep"], true);
+    assert_eq!(old.apply(&change.event, &change.data), Ok(true));
+    assert!(old.power.preventing_idle_sleep);
+    let mut legacy = initial.data;
+    legacy.as_object_mut().unwrap().remove("power");
+    assert_eq!(
+        State::from_snapshot(&legacy).unwrap().power,
+        aegis_api::model::PowerView::default()
+    );
+}
+
+#[test]
 fn a_published_change_is_a_put_or_a_delete() {
     let (fake, text) = setup();
     let stream = open(&fake, "/v1/events", Auth::Bearer(&text), None);

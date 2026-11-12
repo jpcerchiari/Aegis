@@ -815,6 +815,7 @@ mod notes;
 mod notices;
 mod persistence;
 mod popups;
+mod power;
 mod remote;
 mod remote_boards;
 mod remote_content;
