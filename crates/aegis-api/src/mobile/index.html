@@ -15,15 +15,17 @@
         <img src="/mobile/icon-256.png" alt="" width="36" height="36">
         <h1>Aegis <span>Mobile</span></h1>
         <button id="disconnect" type="button" hidden>Disconnect</button>
+        <button id="forget" type="button" hidden>Forget this phone</button>
     </header>
     <main>
         <p id="connection" class="status" role="status"></p>
         <form id="connect">
             <h2>Connect to this computer</h2>
-            <p>Create an API token in Aegis settings and paste it here. Use Read to watch or Full to type.</p>
+            <p>In Aegis, choose Settings ▸ API ▸ Pair a phone… and scan its second QR code with this phone. Or paste a token made in Settings ▸ API: Read to watch, Full to type.</p>
+            <button id="resume" type="button" class="primary" hidden>Connect with this phone's token</button>
             <label for="token">API token</label>
             <input id="token" type="password" required autocomplete="off" autocapitalize="none" spellcheck="false">
-            <button class="primary">Connect</button>
+            <button id="paste" class="primary">Connect</button>
         </form>
 
         <section id="overview" hidden aria-labelledby="overview-title">

@@ -31,7 +31,8 @@ pub enum Bad {
     Name,
     /// No authority this computer trusts signed it.
     Issuer,
-    /// The same, and the server sent its certificate alone: maybe it is Aegis's own.
+    /// The same, and the server sent its certificate alone or with only an authority that issued
+    /// itself: maybe it is Aegis's own.
     Alone,
     Other,
 }

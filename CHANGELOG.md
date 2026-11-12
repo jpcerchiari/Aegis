@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Aegis is its own certificate authority.** With *Aegis's certificate*, Aegis makes an authority once and issues
+  with it the API's certificate for `localhost` and this computer's LAN and Tailscale addresses, again whenever they
+  change. Install the authority on a phone once (*Save certificate…* now saves it), and its browser opens Aegis at
+  those addresses without a warning. The authority can only vouch for `localhost` and private addresses, never for a
+  site on the internet.
+- **Pair a phone with two QR codes.** *Settings ▸ API ▸ Pair a phone…* asks what the phone's token can do (90 days
+  by default) and at which address the phone reaches this computer, Tailscale's first so it works away from home.
+  The first code installs Aegis's authority, from a page that exists only while the dialog is open and shows the
+  fingerprint to compare; the second opens Aegis Mobile, which trades a one-time code for its token and keeps it.
+  *Forget this phone* in the app removes it.
+- **Shares made *Directly* need a new code, once.** They pinned the old certificate; Aegis to Aegis now pins the
+  authority. Share again and paste the new code.
+
 ## 0.1.0
 
 The first release of Aegis: terminals and AI coding agents on one infinite canvas, for macOS, Linux and Windows.

@@ -2,6 +2,8 @@
 //! its certificate, the web pages allowed to call, the tokens and who is connected.
 
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aegis_api::store::{Listen, Scope, Tls, Token, Use, Way};
@@ -11,16 +13,19 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::clipboard::Clipboard;
 use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, ClickEvent, Context, ElementId, Entity, SharedString, TestSupportExt, Window, div, px,
+    App, Bounds, ClickEvent, Context, ElementId, Entity, SharedString, TestSupportExt, Window,
+    canvas, div, fill, point, px, size,
 };
 
 use super::row::{Row, commit_input, menu_button, text_area};
 use crate::grid::hsla;
 use crate::prompt;
 use crate::theme::Ui;
+use crate::workspace::api::PAIRING_NEEDS;
 use crate::workspace::{Workspace, show_notification};
 
 /// The words of the line under HTTPS, when it is plain on this computer.
@@ -31,6 +36,8 @@ const FULL_WARNING: &str = "Anyone with a Full token can run commands on this co
 const SHOWN_ONCE: &str =
     "Copy it now: Aegis keeps only a fingerprint of it and can't show it again.";
 const NO_CLIENT: &str = "No client is connected.";
+const NO_ADDRESS: &str =
+    "This computer has no address on a home network or Tailscale for a phone to reach.";
 
 /// How long ago, in the largest unit that is at least 1: "3 min", "2 days".
 pub(crate) fn span(secs: u64) -> String {
@@ -84,10 +91,10 @@ pub(crate) fn share_line(token: &Token, names: &HashMap<String, String>) -> Opti
     })
 }
 
-/// What New certificate's question says it breaks: every client that pinned the old one, and the
-/// `direct` mirrors that did.
+/// What New certificate's question says it breaks: every client that pinned the old authority or
+/// installed it (a phone), and the `direct` mirrors that pinned it.
 pub(crate) fn renew_words(direct: usize) -> String {
-    let base = "Clients that pinned the old one stop connecting";
+    let base = "Clients that pinned or installed the old one stop connecting";
     match direct {
         0 => format!("{base}."),
         1 => format!("{base}, 1 mirror connected directly among them: share again for it."),
@@ -453,6 +460,18 @@ pub(super) fn rows(
                     .test_support(),
             ),
     );
+    let e = entity.clone();
+    rows.push(
+        Row::new("api.pair", "Phone")
+            .description("Aegis Mobile on a phone, by two QR codes: no token to type")
+            .control(
+                pill(ui, "api-pair", "Pair a phone…")
+                    .on_click(move |_: &ClickEvent, window, cx| {
+                        e.update(cx, |ws, cx| pair_dialog(ws, window, cx))
+                    })
+                    .test_support(),
+            ),
+    );
     if !store.tokens.is_empty() {
         let (e, n) = (entity.clone(), store.tokens.len());
         rows.push(
@@ -537,7 +556,8 @@ fn certificate_row(ws: &Workspace, entity: &Entity<Workspace>, ui: Ui) -> Row {
     let question = renew_words(direct.count());
     Row::new("api.certificate", "Certificate")
         .description(
-            "Its SHA-256 fingerprint: a client pins it. Install the .pem on a phone to trust it",
+            "Aegis's own authority, which signs this computer's certificate. Its SHA-256 \
+             fingerprint: a client pins it. Install the .pem on a phone to trust it",
         )
         .below(
             div()
@@ -602,12 +622,180 @@ enum Life {
     Never,
 }
 
-/// What the New token dialog holds.
+/// What New token and Pair a phone hold.
 struct Draft {
     scope: Scope,
     life: Life,
     /// None: all workspaces.
     workspaces: Option<Vec<String>>,
+    /// Pair a phone's: the address the phone reaches this computer at.
+    address: Option<Ipv4Addr>,
+}
+
+/// A field's name, over it.
+fn label(ui: Ui, text: &'static str) -> gpui_kit::Div {
+    div()
+        .mt(px(4.0))
+        .text_size(px(12.0))
+        .text_color(ui.title_dim)
+        .child(text)
+}
+
+/// When a token made now ends; Err when On a date… isn't YYYY-MM-DD.
+fn expiry(life: Life, date: &str) -> Result<Option<u64>, String> {
+    match life {
+        Life::Never => Ok(None),
+        Life::Days(n) => Ok(Some(now() + n * 86_400)),
+        Life::Date => end_of(date)
+            .map(Some)
+            .ok_or_else(|| "Write the date as YYYY-MM-DD.".to_string()),
+    }
+}
+
+/// The workspaces a token can be limited to: (id, name).
+fn spaces(ws: &Workspace) -> Vec<(String, String)> {
+    ws.order()
+        .iter()
+        .map(|s| (s.id.clone(), s.name.clone()))
+        .collect()
+}
+
+/// What New token and Pair a phone share: what the token can do, when it expires and which
+/// workspaces it sees.
+fn token_fields(
+    draft: &Entity<Draft>,
+    entity: &Entity<Workspace>,
+    spaces: &[(String, String)],
+    date: &Entity<InputState>,
+    ui: Ui,
+    cx: &App,
+) -> gpui_kit::Div {
+    let current = draft.read(cx);
+    let (scope, life, chosen) = (current.scope, current.life, current.workspaces.clone());
+    let pick_scope = {
+        let (draft, entity) = (draft.clone(), entity.clone());
+        move |value: SharedString, cx: &mut App| {
+            draft.update(cx, |d, _| {
+                d.scope = match value.as_ref() {
+                    "read" => Scope::Read,
+                    "full" => Scope::Full,
+                    _ => Scope::Control,
+                }
+            });
+            entity.update(cx, |_, cx| cx.notify());
+        }
+    };
+    let lives: Vec<(SharedString, SharedString)> = vec![
+        ("1".into(), "In 1 day".into()),
+        ("7".into(), "In 7 days".into()),
+        ("30".into(), "In 30 days".into()),
+        ("90".into(), "In 90 days".into()),
+        ("365".into(), "In 1 year".into()),
+        ("date".into(), "On a date…".into()),
+        ("never".into(), "Never".into()),
+    ];
+    let life_key: SharedString = match life {
+        Life::Days(n) => n.to_string().into(),
+        Life::Date => "date".into(),
+        Life::Never => "never".into(),
+    };
+    let pick_life = {
+        let (draft, entity) = (draft.clone(), entity.clone());
+        move |value: SharedString, cx: &mut App| {
+            draft.update(cx, |d, _| {
+                d.life = match value.as_ref() {
+                    "date" => Life::Date,
+                    "never" => Life::Never,
+                    days => Life::Days(days.parse().unwrap_or(30)),
+                }
+            });
+            entity.update(cx, |_, cx| cx.notify());
+        }
+    };
+    let every = {
+        let (draft, entity) = (draft.clone(), entity.clone());
+        Checkbox::new("api-token-all-workspaces")
+            .label("All workspaces")
+            .checked(chosen.is_none())
+            .on_click(move |on: &bool, _, cx| {
+                let on = *on;
+                draft.update(cx, |d, _| {
+                    d.workspaces = if on { None } else { Some(Vec::new()) }
+                });
+                entity.update(cx, |_, cx| cx.notify());
+            })
+    };
+    let boxes = spaces.iter().map(|(id, title)| {
+        let (draft, entity, id) = (draft.clone(), entity.clone(), id.clone());
+        let checked = chosen.as_ref().is_some_and(|c| c.contains(&id));
+        Checkbox::new(ElementId::Name(format!("api-token-workspace-{id}").into()))
+            .label(title.clone())
+            .checked(checked)
+            .on_click(move |on: &bool, _, cx| {
+                let on = *on;
+                draft.update(cx, |d, _| {
+                    let list = d.workspaces.get_or_insert_with(Vec::new);
+                    list.retain(|w| *w != id);
+                    if on {
+                        list.push(id.clone());
+                    }
+                });
+                entity.update(cx, |_, cx| cx.notify());
+            })
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .child(label(ui, "Can"))
+        .child(menu_button(
+            "menu-api-token-scope",
+            vec![
+                (
+                    "read".into(),
+                    "Read: see everything, terminals' text included".into(),
+                ),
+                (
+                    "control".into(),
+                    "Control: also act, answer requests, open agents, run automations".into(),
+                ),
+                (
+                    "full".into(),
+                    "Full: also type into terminals and press keys".into(),
+                ),
+            ],
+            scope.word().to_lowercase().into(),
+            false,
+            pick_scope,
+        ))
+        .when(scope == Scope::Full, |el| {
+            el.child(
+                div()
+                    .id("api-full-warning")
+                    .text_size(px(12.0))
+                    .child(FULL_WARNING)
+                    .test_support(),
+            )
+        })
+        .child(label(ui, "Expires"))
+        .child(menu_button(
+            "menu-api-token-expires",
+            lives,
+            life_key,
+            false,
+            pick_life,
+        ))
+        .when(life == Life::Date, |el| el.child(Input::new(date)))
+        .child(label(ui, "Workspaces"))
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_x(px(14.0))
+                .gap_y(px(4.0))
+                .child(every)
+                .children(boxes),
+        )
 }
 
 /// New token…: a name, what it can do, when it expires and which workspaces; Make token, then the
@@ -622,94 +810,12 @@ fn token_dialog(ws: &Workspace, window: &mut Window, cx: &mut Context<Workspace>
         scope: Scope::Control,
         life: Life::Days(30),
         workspaces: None,
+        address: None,
     });
-    let spaces: Vec<(String, String)> = ws
-        .order()
-        .iter()
-        .map(|s| (s.id.clone(), s.name.clone()))
-        .collect();
+    let spaces = spaces(ws);
     let first = name.clone();
     window.open_alert_dialog(cx, move |alert, _, cx| {
-        let current = draft.read(cx);
-        let (scope, life, chosen) = (current.scope, current.life, current.workspaces.clone());
-        let pick_scope = {
-            let (draft, entity) = (draft.clone(), entity.clone());
-            move |value: SharedString, cx: &mut App| {
-                draft.update(cx, |d, _| {
-                    d.scope = match value.as_ref() {
-                        "read" => Scope::Read,
-                        "full" => Scope::Full,
-                        _ => Scope::Control,
-                    }
-                });
-                entity.update(cx, |_, cx| cx.notify());
-            }
-        };
-        let lives: Vec<(SharedString, SharedString)> = vec![
-            ("1".into(), "In 1 day".into()),
-            ("7".into(), "In 7 days".into()),
-            ("30".into(), "In 30 days".into()),
-            ("90".into(), "In 90 days".into()),
-            ("365".into(), "In 1 year".into()),
-            ("date".into(), "On a date…".into()),
-            ("never".into(), "Never".into()),
-        ];
-        let life_key: SharedString = match life {
-            Life::Days(n) => n.to_string().into(),
-            Life::Date => "date".into(),
-            Life::Never => "never".into(),
-        };
-        let pick_life = {
-            let (draft, entity) = (draft.clone(), entity.clone());
-            move |value: SharedString, cx: &mut App| {
-                draft.update(cx, |d, _| {
-                    d.life = match value.as_ref() {
-                        "date" => Life::Date,
-                        "never" => Life::Never,
-                        days => Life::Days(days.parse().unwrap_or(30)),
-                    }
-                });
-                entity.update(cx, |_, cx| cx.notify());
-            }
-        };
-        let every = {
-            let (draft, entity) = (draft.clone(), entity.clone());
-            Checkbox::new("api-token-all-workspaces")
-                .label("All workspaces")
-                .checked(chosen.is_none())
-                .on_click(move |on: &bool, _, cx| {
-                    let on = *on;
-                    draft.update(cx, |d, _| {
-                        d.workspaces = if on { None } else { Some(Vec::new()) }
-                    });
-                    entity.update(cx, |_, cx| cx.notify());
-                })
-        };
-        let boxes = spaces.iter().map(|(id, title)| {
-            let (draft, entity, id) = (draft.clone(), entity.clone(), id.clone());
-            let checked = chosen.as_ref().is_some_and(|c| c.contains(&id));
-            Checkbox::new(ElementId::Name(format!("api-token-workspace-{id}").into()))
-                .label(title.clone())
-                .checked(checked)
-                .on_click(move |on: &bool, _, cx| {
-                    let on = *on;
-                    draft.update(cx, |d, _| {
-                        let list = d.workspaces.get_or_insert_with(Vec::new);
-                        list.retain(|w| *w != id);
-                        if on {
-                            list.push(id.clone());
-                        }
-                    });
-                    entity.update(cx, |_, cx| cx.notify());
-                })
-        });
-        let label = |text: &'static str| {
-            div()
-                .mt(px(4.0))
-                .text_size(px(12.0))
-                .text_color(ui.title_dim)
-                .child(text)
-        };
+        let fields = token_fields(&draft, &entity, &spaces, &date, ui, cx);
         let make = {
             let (entity, name, date, draft) =
                 (entity.clone(), name.clone(), date.clone(), draft.clone());
@@ -719,15 +825,8 @@ fn token_dialog(ws: &Workspace, window: &mut Window, cx: &mut Context<Workspace>
                     date.read(cx).value().to_string(),
                 );
                 let d = draft.read(cx);
-                let expires = match d.life {
-                    Life::Never => Ok(None),
-                    Life::Days(n) => Ok(Some(now() + n * 86_400)),
-                    Life::Date => end_of(&date)
-                        .map(Some)
-                        .ok_or("Write the date as YYYY-MM-DD."),
-                };
-                let (scope, workspaces) = (d.scope, d.workspaces.clone());
-                let made = expires.map_err(String::from).and_then(|expires| {
+                let (life, scope, workspaces) = (d.life, d.scope, d.workspaces.clone());
+                let made = expiry(life, &date).and_then(|expires| {
                     entity.update(cx, |ws, cx| {
                         ws.mint_token(&name, scope, expires, workspaces, cx)
                     })
@@ -741,11 +840,7 @@ fn token_dialog(ws: &Workspace, window: &mut Window, cx: &mut Context<Workspace>
                         true
                     }
                     Err(problem) => {
-                        show_notification(
-                            window,
-                            cx,
-                            gpui_kit::component::notification::Notification::warning(problem),
-                        );
+                        show_notification(window, cx, Notification::warning(problem));
                         false
                     }
                 }
@@ -761,62 +856,308 @@ fn token_dialog(ws: &Workspace, window: &mut Window, cx: &mut Context<Workspace>
                     .flex()
                     .flex_col()
                     .gap(px(6.0))
-                    .child(label("Name"))
+                    .child(label(ui, "Name"))
                     .child(Input::new(&name))
-                    .child(label("Can"))
-                    .child(menu_button(
-                        "menu-api-token-scope",
-                        vec![
-                            (
-                                "read".into(),
-                                "Read: see everything, terminals' text included".into(),
-                            ),
-                            (
-                                "control".into(),
-                                "Control: also act, answer requests, open agents, run automations"
-                                    .into(),
-                            ),
-                            (
-                                "full".into(),
-                                "Full: also type into terminals and press keys".into(),
-                            ),
-                        ],
-                        scope.word().to_lowercase().into(),
-                        false,
-                        pick_scope,
-                    ))
-                    .when(scope == Scope::Full, |el| {
-                        el.child(
-                            div()
-                                .id("api-full-warning")
-                                .text_size(px(12.0))
-                                .child(FULL_WARNING)
-                                .test_support(),
-                        )
-                    })
-                    .child(label("Expires"))
-                    .child(menu_button(
-                        "menu-api-token-expires",
-                        lives,
-                        life_key,
-                        false,
-                        pick_life,
-                    ))
-                    .when(life == Life::Date, |el| el.child(Input::new(&date)))
-                    .child(label("Workspaces"))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_x(px(14.0))
-                            .gap_y(px(4.0))
-                            .child(every)
-                            .children(boxes),
-                    ),
+                    .child(fields),
             )
             .on_ok(move |_, window, cx| make(window, cx))
     });
     first.update(cx, |input, cx| input.focus(window, cx));
+}
+
+/// How Pair a phone names an address: Tailscale's reaches the phone anywhere, a home network's
+/// only there.
+fn address_words(address: Ipv4Addr) -> String {
+    if aegis_api::tls::is_tailscale(address) {
+        format!("{address} · Tailscale, at home and away")
+    } else {
+        format!("{address} · this network only")
+    }
+}
+
+/// Pair a phone…: the token's name, the address the phone reaches this computer at and the
+/// token's choices; Show QR codes makes its one-time code and shows the two QR codes. With the
+/// API not ready for a phone, Turn it on first.
+fn pair_dialog(ws: &Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    let entity = cx.entity();
+    if let Some(problem) = ws.pairing_problem() {
+        if problem == PAIRING_NEEDS {
+            prompt::confirm(
+                "Pair a phone",
+                PAIRING_NEEDS,
+                "Turn it on",
+                move |window, cx| {
+                    entity.update(cx, |ws, cx| ws.fit_api(Way::Pinned, cx));
+                    let e = entity.clone();
+                    window.defer(cx, move |window, cx| {
+                        e.update(cx, |ws, cx| pair_dialog(ws, window, cx))
+                    });
+                },
+                window,
+                cx,
+            );
+        } else {
+            show_notification(window, cx, Notification::warning(problem));
+        }
+        return;
+    }
+    let addresses = ws.pairing_addresses();
+    let Some(&usual) = addresses.first() else {
+        show_notification(window, cx, Notification::warning(NO_ADDRESS));
+        return;
+    };
+    let ui = ws.ui;
+    let name = cx.new(|cx| InputState::new(window, cx).default_value("Phone"));
+    let date = cx.new(|cx| InputState::new(window, cx).placeholder("YYYY-MM-DD"));
+    let draft = cx.new(|_| Draft {
+        scope: Scope::Control,
+        life: Life::Days(90),
+        workspaces: None,
+        address: Some(usual),
+    });
+    let spaces = spaces(ws);
+    let first = name.clone();
+    window.open_alert_dialog(cx, move |alert, _, cx| {
+        let chosen = draft.read(cx).address.unwrap_or(usual);
+        let options: Vec<(SharedString, SharedString)> = addresses
+            .iter()
+            .map(|address| (address.to_string().into(), address_words(*address).into()))
+            .collect();
+        let pick_address = {
+            let (draft, entity) = (draft.clone(), entity.clone());
+            move |value: SharedString, cx: &mut App| {
+                if let Ok(address) = value.parse::<Ipv4Addr>() {
+                    draft.update(cx, |d, _| d.address = Some(address));
+                    entity.update(cx, |_, cx| cx.notify());
+                }
+            }
+        };
+        let fields = token_fields(&draft, &entity, &spaces, &date, ui, cx);
+        let show = {
+            let (entity, name, date, draft) =
+                (entity.clone(), name.clone(), date.clone(), draft.clone());
+            move |window: &mut Window, cx: &mut App| -> bool {
+                let (name, date) = (
+                    name.read(cx).value().to_string(),
+                    date.read(cx).value().to_string(),
+                );
+                let d = draft.read(cx);
+                let (life, scope, workspaces) = (d.life, d.scope, d.workspaces.clone());
+                let address = d.address.unwrap_or(usual);
+                let started = expiry(life, &date).and_then(|expires| {
+                    entity.update(cx, |ws, cx| {
+                        ws.start_pairing(&name, address, scope, expires, workspaces, cx)
+                    })
+                });
+                match started {
+                    Ok(()) => {
+                        let e = entity.clone();
+                        window.defer(cx, move |window, cx| {
+                            e.update(cx, |ws, cx| qr_dialog(ws, window, cx))
+                        });
+                        true
+                    }
+                    Err(problem) => {
+                        show_notification(window, cx, Notification::warning(problem));
+                        false
+                    }
+                }
+            }
+        };
+        alert
+            .confirm()
+            .title("Pair a phone")
+            .w(px(480.0))
+            .button_props(DialogButtonProps::default().ok_text("Show QR codes"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .child(label(ui, "Name"))
+                    .child(Input::new(&name))
+                    .child(label(ui, "The phone reaches this computer at"))
+                    .child(menu_button(
+                        "menu-api-pair-address",
+                        options,
+                        chosen.to_string().into(),
+                        false,
+                        pick_address,
+                    ))
+                    .child(fields),
+            )
+            .on_ok(move |_, window, cx| show(window, cx))
+    });
+    first.update(cx, |input, cx| input.focus(window, cx));
+}
+
+/// A module of the QR codes, in pixels, and the blank margin around them, in modules (the
+/// standard's quiet zone).
+const MODULE: f32 = 4.0;
+const QUIET: i32 = 4;
+
+/// A QR code's dark modules, as runs along its rows: (row, first column, length).
+struct Qr {
+    modules: i32,
+    runs: Rc<Vec<(i32, i32, i32)>>,
+}
+
+impl Qr {
+    /// None when `text` is too long for a QR code.
+    fn of(text: &str) -> Option<Qr> {
+        let code = qrcodegen::QrCode::encode_text(text, qrcodegen::QrCodeEcc::Medium).ok()?;
+        let modules = code.size();
+        let mut runs = Vec::new();
+        for y in 0..modules {
+            let mut x = 0;
+            while x < modules {
+                let start = x;
+                while x < modules && code.get_module(x, y) {
+                    x += 1;
+                }
+                if x > start {
+                    runs.push((y, start, x - start));
+                } else {
+                    x += 1;
+                }
+            }
+        }
+        Some(Qr {
+            modules,
+            runs: Rc::new(runs),
+        })
+    }
+
+    /// Black on white, with its quiet zone.
+    fn element(&self, id: &'static str) -> gpui_kit::Stateful<gpui_kit::Div> {
+        let side = px((self.modules + 2 * QUIET) as f32 * MODULE);
+        let runs = self.runs.clone();
+        div()
+            .id(id)
+            .flex_none()
+            .w(side)
+            .h(side)
+            .bg(gpui_kit::white())
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        let black = gpui_kit::hsla(0.0, 0.0, 0.0, 1.0);
+                        for &(y, x, length) in runs.iter() {
+                            let at = point(
+                                bounds.origin.x + px((x + QUIET) as f32 * MODULE),
+                                bounds.origin.y + px((y + QUIET) as f32 * MODULE),
+                            );
+                            let run = size(px(length as f32 * MODULE), px(MODULE));
+                            window.paint_quad(fill(Bounds::new(at, run), black));
+                        }
+                    },
+                )
+                .size_full(),
+            )
+    }
+}
+
+/// A fingerprint in lines of 8 pairs, to read against the page's.
+fn fingerprint_lines(fingerprint: &str) -> Vec<String> {
+    let pairs: Vec<&str> = fingerprint.split(':').collect();
+    pairs.chunks(8).map(|line| line.join(":")).collect()
+}
+
+/// Under the QR codes: whether the phone came for its token yet.
+fn paired_words(paired: bool) -> &'static str {
+    if paired {
+        "Paired: the phone has its token, in Tokens above. You can close this."
+    } else {
+        "Waiting for the phone. The second code works once, within 10 minutes, while this is open."
+    }
+}
+
+/// Pair a phone's two QR codes: the page that installs Aegis's authority, then Aegis Mobile with
+/// the one-time code. Closing it stops the page and forgets the code.
+fn qr_dialog(ws: &Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    let Some(pairing) = ws.api.pairing.as_ref() else {
+        return;
+    };
+    let ui = ws.ui;
+    let entity = cx.entity();
+    let page = pairing.page_url();
+    let (page_qr, app_qr) = (Qr::of(&page), Qr::of(&pairing.app_url()));
+    let lines = fingerprint_lines(ws.api.fingerprint.as_deref().unwrap_or_default());
+    window.open_alert_dialog(cx, move |alert, _, cx| {
+        let paired = entity
+            .read(cx)
+            .api
+            .pairing
+            .as_ref()
+            .is_some_and(|pairing| pairing.paired.is_some());
+        let small = |text: SharedString| {
+            div()
+                .text_size(px(12.0))
+                .text_color(ui.title_dim)
+                .child(text)
+        };
+        let step = |title: &'static str| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .w(px(220.0))
+                .child(div().text_size(px(13.0)).child(title))
+        };
+        let first = step("1. Install Aegis's authority")
+            .children(
+                page_qr
+                    .as_ref()
+                    .map(|qr| qr.element("api-pair-page-qr").test_support()),
+            )
+            .child(small(format!("Or open {page}").into()))
+            .child(small(
+                "Then check that the page shows this fingerprint:".into(),
+            ))
+            .child(
+                div()
+                    .id("api-pair-fingerprint")
+                    .flex()
+                    .flex_col()
+                    .text_size(px(11.0))
+                    .children(lines.iter().map(|line| div().child(line.clone())))
+                    .test_support(),
+            );
+        let second = step("2. Open Aegis Mobile")
+            .children(
+                app_qr
+                    .as_ref()
+                    .map(|qr| qr.element("api-pair-app-qr").test_support()),
+            )
+            .child(small(
+                "Scan it once the authority is installed: the phone gets its token and keeps it."
+                    .into(),
+            ));
+        let done = entity.clone();
+        alert
+            .confirm()
+            .title("Pair a phone")
+            .w(px(540.0))
+            .show_cancel(false)
+            .button_props(DialogButtonProps::default().ok_text("Done"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.0))
+                    .child(div().flex().gap(px(28.0)).child(first).child(second))
+                    .child(
+                        div()
+                            .id("api-pair-status")
+                            .text_size(px(12.0))
+                            .child(paired_words(paired))
+                            .test_support(),
+                    ),
+            )
+            .on_ok(|_, _, _| true)
+            .on_close(move |_, _, cx| done.update(cx, |ws, cx| ws.stop_pairing(cx)))
+    });
 }
 
 /// The token just made, once, with Copy: its text leaves memory when the dialog closes.
@@ -944,17 +1285,17 @@ mod tests {
     fn new_certificate_counts_the_direct_mirrors() {
         assert_eq!(
             renew_words(0),
-            "Clients that pinned the old one stop connecting."
+            "Clients that pinned or installed the old one stop connecting."
         );
         assert_eq!(
             renew_words(1),
-            "Clients that pinned the old one stop connecting, 1 mirror connected directly among \
-             them: share again for it."
+            "Clients that pinned or installed the old one stop connecting, 1 mirror connected \
+             directly among them: share again for it."
         );
         assert_eq!(
             renew_words(2),
-            "Clients that pinned the old one stop connecting, 2 mirrors connected directly among \
-             them: share again for them."
+            "Clients that pinned or installed the old one stop connecting, 2 mirrors connected \
+             directly among them: share again for them."
         );
     }
 
@@ -977,5 +1318,75 @@ mod tests {
         for bad in ["", "tomorrow", "2030-13-01", "15/01/2030"] {
             assert_eq!(end_of(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn a_qr_codes_runs_paint_exactly_its_dark_modules() {
+        let text = "https://100.101.102.103:7411/mobile/#code=abcdefghijklmnopqrstuvwxyz012345";
+        let code = qrcodegen::QrCode::encode_text(text, qrcodegen::QrCodeEcc::Medium).unwrap();
+        let qr = Qr::of(text).unwrap();
+        assert_eq!(qr.modules, code.size());
+        let mut painted = vec![vec![false; code.size() as usize]; code.size() as usize];
+        for &(y, x, length) in qr.runs.iter() {
+            assert!(length > 0);
+            for column in x..x + length {
+                let cell = &mut painted[y as usize][column as usize];
+                assert!(!*cell, "painted twice: {column},{y}");
+                *cell = true;
+            }
+        }
+        for y in 0..code.size() {
+            for x in 0..code.size() {
+                assert_eq!(
+                    painted[y as usize][x as usize],
+                    code.get_module(x, y),
+                    "{x},{y}"
+                );
+            }
+        }
+        // Runs, not modules: a row's neighbours are one quad.
+        let dark = (0..code.size())
+            .flat_map(|y| (0..code.size()).map(move |x| (x, y)))
+            .filter(|&(x, y)| code.get_module(x, y))
+            .count();
+        assert!(qr.runs.len() < dark);
+        assert!(
+            Qr::of(&"x".repeat(8000)).is_none(),
+            "too long for any QR code"
+        );
+    }
+
+    #[test]
+    fn the_fingerprint_reads_in_four_lines_of_eight() {
+        let fingerprint: Vec<String> = (0u8..32).map(|byte| format!("{byte:02X}")).collect();
+        let lines = fingerprint_lines(&fingerprint.join(":"));
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], "00:01:02:03:04:05:06:07");
+        assert_eq!(lines[3], "18:19:1A:1B:1C:1D:1E:1F");
+    }
+
+    #[test]
+    fn pair_a_phone_says_which_address_reaches_it_away_from_home() {
+        assert_eq!(
+            address_words(Ipv4Addr::new(100, 101, 102, 103)),
+            "100.101.102.103 · Tailscale, at home and away"
+        );
+        assert_eq!(
+            address_words(Ipv4Addr::new(192, 168, 1, 5)),
+            "192.168.1.5 · this network only"
+        );
+    }
+
+    #[test]
+    fn a_tokens_life_becomes_its_expiry() {
+        assert_eq!(expiry(Life::Never, ""), Ok(None));
+        let before = now();
+        let ninety = expiry(Life::Days(90), "").unwrap().unwrap();
+        assert!((before + 90 * 86_400..=now() + 90 * 86_400).contains(&ninety));
+        assert_eq!(expiry(Life::Date, "2030-01-15"), Ok(end_of("2030-01-15")));
+        assert_eq!(
+            expiry(Life::Date, "soon"),
+            Err("Write the date as YYYY-MM-DD.".to_string())
+        );
     }
 }

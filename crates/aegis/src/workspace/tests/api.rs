@@ -2157,6 +2157,7 @@ fn settings_show_the_api_its_fields_and_its_tokens(cx: &mut TestAppContext) {
             "field-api.port",
             "field-api.tls",
             "api-new-token",
+            "api-pair",
             "api-revoke-all",
             "api-listening",
         ] {
@@ -2170,6 +2171,147 @@ fn settings_show_the_api_its_fields_and_its_tokens(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
+}
+
+/// What the API's server asks when a phone sends `POST /v1/pair` with `code`.
+fn pair(
+    handle: AnyWindowHandle,
+    ws: &Entity<Workspace>,
+    cx: &mut TestAppContext,
+    code: &str,
+) -> Value {
+    let (reply, answers) = std::sync::mpsc::channel();
+    let message = Message {
+        hello: Hello {
+            terminal: aegis_api::PAIRING.into(),
+            client: "api".into(),
+            control: None,
+        },
+        conn: 31,
+        incoming: Incoming::Request {
+            id: json!(31),
+            method: aegis_api::PAIR.into(),
+            params: json!({ "code": code }),
+        },
+        reply,
+    };
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.serve(message, window, cx))
+    })
+    .unwrap();
+    serde_json::from_str(&answers.try_recv().expect("answered at once")).unwrap()
+}
+
+#[gpui_kit::test]
+fn pair_a_phone_trades_its_code_for_a_token_once(cx: &mut TestAppContext) {
+    use crate::workspace::api::PAIRING_NEEDS;
+    use aegis_api::store::Way;
+    let (handle, ws, _dir) = with_data(cx);
+    ws.update(cx, |ws, cx| ws.api_edit(|s| s.port = 0, cx));
+    // Off, then on but only on this computer: Turn it on is what fixes it.
+    ws.read_with(cx, |ws, _| {
+        assert_eq!(ws.pairing_problem().as_deref(), Some(PAIRING_NEEDS))
+    });
+    ws.update(cx, |ws, cx| ws.fit_api(Way::Public, cx));
+    ws.read_with(cx, |ws, _| {
+        assert_eq!(ws.pairing_problem().as_deref(), Some(PAIRING_NEEDS))
+    });
+    ws.update(cx, |ws, cx| ws.fit_api(Way::Pinned, cx));
+    ws.read_with(cx, |ws, _| assert_eq!(ws.pairing_problem(), None));
+    // No code is good before Pair a phone shows one.
+    assert_eq!(
+        refused(&pair(handle, &ws, cx, "")).0,
+        Some(i64::from(codes::AUTH))
+    );
+
+    let later = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 86_400;
+    let started = ws.update(cx, |ws, cx| {
+        ws.start_pairing(
+            "  ",
+            std::net::Ipv4Addr::LOCALHOST,
+            Scope::Read,
+            None,
+            None,
+            cx,
+        )
+    });
+    assert_eq!(started, Err("A token needs a name.".to_string()));
+    ws.update(cx, |ws, cx| {
+        ws.start_pairing(
+            "Phone",
+            std::net::Ipv4Addr::LOCALHOST,
+            Scope::Read,
+            Some(later),
+            None,
+            cx,
+        )
+    })
+    .unwrap();
+    let (page, app, port) = ws.read_with(cx, |ws, _| {
+        let pairing = ws.api.pairing.as_ref().expect("pairing");
+        let port = ws.api.server.as_ref().unwrap().addr().port();
+        (pairing.page_url(), pairing.app_url(), port)
+    });
+    assert!(page.starts_with("http://127.0.0.1:"), "{page}");
+    let prefix = format!("https://127.0.0.1:{port}/mobile/#code=");
+    let code = app.strip_prefix(&prefix).expect(&app).to_string();
+    assert!(code.len() >= 32, "{code}");
+
+    // The page gives the authority while the dialog is open.
+    {
+        use std::io::{Read, Write};
+        let mut stream =
+            std::net::TcpStream::connect(page.trim_start_matches("http://").trim_end_matches('/'))
+                .unwrap();
+        stream
+            .write_all(b"GET /aegis-ca.crt HTTP/1.1\r\nHost: phone\r\n\r\n")
+            .unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).unwrap();
+        assert!(answer.starts_with(b"HTTP/1.1 200"));
+    }
+
+    // Another code is refused; the right one is a token with the dialog's choices, once.
+    assert_eq!(
+        refused(&pair(handle, &ws, cx, "not-the-code")).0,
+        Some(i64::from(codes::AUTH))
+    );
+    let answer = pair(handle, &ws, cx, &code);
+    let token = answer["result"]["token"]
+        .as_str()
+        .expect("a token")
+        .to_string();
+    ws.read_with(cx, |ws, _| {
+        let made = ws
+            .api
+            .store
+            .as_ref()
+            .unwrap()
+            .tokens
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(made.name, "Phone");
+        assert_eq!(made.scope, Scope::Read);
+        assert_eq!(made.expires, Some(later));
+        assert_eq!(made.workspaces, None);
+        assert_eq!(made.hash, hash(&token));
+        assert_eq!(ws.api.pairing.as_ref().unwrap().paired, Some(made.id));
+    });
+    assert_eq!(
+        refused(&pair(handle, &ws, cx, &code)).0,
+        Some(i64::from(codes::AUTH))
+    );
+    let count = ws.read_with(cx, |ws, _| ws.api.store.as_ref().unwrap().tokens.len());
+    assert_eq!(count, 1, "one token, however often the code comes");
+
+    // Closed: no pairing is left.
+    ws.update(cx, |ws, cx| ws.stop_pairing(cx));
+    ws.read_with(cx, |ws, _| assert!(ws.api.pairing.is_none()));
 }
 
 // The review's findings: what a limited token or a big number could reach.
@@ -3782,7 +3924,7 @@ fn a_share_answers_its_code_once(cx: &mut TestAppContext) {
     };
     assert_eq!(line["result"]["target"]["workspace"], json!(first));
     let decoded = code::decode(line["result"]["code"].as_str().unwrap()).unwrap();
-    let pin = aegis_api::tls::pin(&aegis_api::tls::own(dir.path()).unwrap().chain[0]);
+    let pin = aegis_api::tls::pin(&aegis_api::tls::root(dir.path()).unwrap());
     assert_eq!(decoded.url, "https://192.168.1.5:7411");
     assert_eq!(decoded.trust, Trust::Pinned(pin));
     let token = ws.read_with(cx, |ws, _| {

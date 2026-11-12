@@ -9,7 +9,7 @@ use crate::model::{Caller, MeView, Notice, State};
 use crate::registry::{self, Does, Resource};
 use crate::store::{Listen, Settings, Tls, Token, Use, folder, hash, random_text, verify};
 use crate::terminals::{self, FRAME_EVERY, Screens, TerminalRef};
-use crate::{CLIENT, CLIENTS, STATE, TERMINAL, WATCH, codes, openapi, tls};
+use crate::{CLIENT, CLIENTS, PAIR, PAIRING, STATE, TERMINAL, WATCH, codes, openapi, tls};
 use aegis_mcp::bus::{CLOSED, next_conn};
 use aegis_mcp::{Hello, Incoming, Message, rpc};
 use bytes::Bytes;
@@ -101,7 +101,7 @@ impl Options {
         let tls = match &settings.tls {
             Tls::Off if !ip.to_canonical().is_loopback() => return Err(HTTPS_NEEDED.into()),
             Tls::Off => None,
-            Tls::Own => Some(tls::server_config(tls::own(data)?)?),
+            Tls::Own => Some(tls::own_config(data)?),
             Tls::Files { cert, key } => Some(tls::server_config(tls::files(cert, key)?)?),
         };
         let origins = settings
@@ -1108,8 +1108,66 @@ async fn handle(
         *response.status_mut() = StatusCode::NO_CONTENT;
         return Ok(decorate(response, &shared, origin.as_deref(), true));
     }
+    // A phone's pairing shows a code, not a token, and only over TLS: the code mustn't travel in
+    // clear. Same origin only, as the mobile app is.
+    if shared.options.tls.is_some()
+        && request.method() == hyper::Method::POST
+        && request.uri().path() == PAIR_PATH
+    {
+        let response = pair(&shared, peer, request).await;
+        return Ok(decorate(response, &shared, None, false));
+    }
     let response = route(&shared, peer, request).await;
     Ok(decorate(response, &shared, origin.as_deref(), false))
+}
+
+/// Where a phone trades its pairing code for its token.
+const PAIR_PATH: &str = "/v1/pair";
+/// The longest pairing code read.
+const PAIR_CODE_MOST: usize = 128;
+
+/// `POST /v1/pair` (docs/specs/api.md, Pair a phone): the one-time code of Aegis's Pair a phone
+/// dialog, for the token the dialog made it for. The UI thread checks it. A wrong code counts as
+/// a failed authentication of the address, so a code can't be guessed: past the limit even the
+/// right one waits.
+async fn pair(shared: &Arc<Shared>, peer: Peer, request: Request<RequestBody>) -> Response<Body> {
+    let clock = Instant::now();
+    let addr = client_addr(peer.addr, request.headers());
+    let wait = shared.inner().limiter.refused(&addr, clock);
+    if let Some(wait) = wait {
+        shared.audit.write(&addr, None, "refused", 429);
+        return closing(slow_down(
+            wait,
+            "Too many failed attempts from this address: wait.",
+        ));
+    }
+    let code = match json_body(request).await {
+        Ok(body) => body.and_then(|body| body["code"].as_str().map(str::to_string)),
+        Err(response) => return response,
+    };
+    let Some(code) = code.filter(|code| !code.is_empty() && code.len() <= PAIR_CODE_MOST) else {
+        return error(
+            400,
+            "invalid",
+            "Send the pairing code as {\"code\": \"…\"}.",
+        );
+    };
+    let answer = match ask_as(shared, PAIRING.into(), PAIR, json!({ "code": code })).await {
+        Ok(answer) => answer,
+        Err(response) => return response,
+    };
+    let Some(token) = answer["result"]["token"].as_str() else {
+        shared.inner().limiter.failed(&addr, clock);
+        shared.audit.write(&addr, None, "pair_failed", 401);
+        return closing(error(
+            401,
+            "auth",
+            "This pairing code isn't good: it was used, or Pair a phone closed in Aegis.",
+        ));
+    };
+    shared.inner().limiter.passed(&addr);
+    shared.audit.write(&addr, None, "paired", 200);
+    json_response(200, &json!({ "token": token }))
 }
 
 /// The mobile shell is public over TLS. Its data still goes through the authenticated API.
@@ -1599,6 +1657,17 @@ async fn ask(
     method: &str,
     params: Value,
 ) -> Result<Value, Response<Body>> {
+    ask_as(shared, token.id.to_string(), method, params).await
+}
+
+/// `ask`, from the terminal `terminal`: a token's id, or [`PAIRING`] for a phone with none yet.
+#[allow(clippy::result_large_err)] // the Err is an answer to give, once: boxing buys nothing
+async fn ask_as(
+    shared: &Arc<Shared>,
+    terminal: String,
+    method: &str,
+    params: Value,
+) -> Result<Value, Response<Body>> {
     /// Tells the UI thread nobody waits for the answer anymore, if the request is dropped first.
     struct Guard {
         tx: UnboundedSender<Message>,
@@ -1626,7 +1695,7 @@ async fn ask(
         }
     }
     let hello = Hello {
-        terminal: token.id.to_string(),
+        terminal,
         client: CLIENT.into(),
         control: None,
     };

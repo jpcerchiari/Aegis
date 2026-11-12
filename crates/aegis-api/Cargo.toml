@@ -37,9 +37,10 @@ ring = "0.17"
 base64 = "0.22"
 # Already in the tree: the query strings.
 form_urlencoded = "1"
-# Already in the tree (aegis-terminal's): the computer's name `GET /v1/me` gives.
-sysinfo = { version = "0.31", default-features = false, features = ["system"] }
-# New: writes Aegis's certificate; no crate in the tree writes X.509.
+# Already in the tree (aegis-terminal's): the computer's name `GET /v1/me` gives, and its network
+# addresses, which Aegis's certificate is issued for.
+sysinfo = { version = "0.31", default-features = false, features = ["system", "network"] }
+# New: writes Aegis's authority and the certificates it issues; no crate in the tree writes X.509.
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 
 # New: the system's own verifier for a public certificate (the rustls project's, MIT or

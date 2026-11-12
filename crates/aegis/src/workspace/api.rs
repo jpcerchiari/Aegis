@@ -31,6 +31,47 @@ const FAST_TICK: Duration = Duration::from_millis(100);
 pub(super) const MOVED_FOR: Duration = Duration::from_millis(250);
 /// How often the tokens' last uses are written.
 const USES_EVERY: Duration = Duration::from_secs(60);
+/// How long a pairing code works, at most, while Pair a phone is open.
+const PAIRING_LIFE: Duration = Duration::from_secs(10 * 60);
+/// What Pair a phone says when the API can't take a phone yet; Turn it on fixes it.
+pub(crate) const PAIRING_NEEDS: &str =
+    "Pairing needs the API on every network, with Aegis's certificate.";
+
+/// A phone being paired (docs/specs/api.md, Pair a phone), while its dialog is open: the token its
+/// code becomes, the code the second QR code carries, and the page the first one opens. Dropped
+/// when the dialog closes, which stops the page and forgets the code.
+pub(crate) struct Pairing {
+    pub name: String,
+    pub scope: Scope,
+    pub expires: Option<u64>,
+    pub workspaces: Option<Vec<String>>,
+    pub address: std::net::Ipv4Addr,
+    /// The API's port.
+    pub port: u16,
+    /// The one-time code: it exists only here and in the second QR code.
+    code: String,
+    made: Instant,
+    /// The page that gives Aegis's authority.
+    page: aegis_api::pairing::Page,
+    /// The token the phone was given, once it was.
+    pub paired: Option<u64>,
+}
+
+impl Pairing {
+    /// Where the first QR code points: the page.
+    pub(crate) fn page_url(&self) -> String {
+        self.page.url()
+    }
+
+    /// Where the second QR code points: Aegis Mobile, with the code after `#`, which a browser
+    /// never sends to a server.
+    pub(crate) fn app_url(&self) -> String {
+        format!(
+            "https://{}:{}/mobile/#code={}",
+            self.address, self.port, self.code
+        )
+    }
+}
 
 /// The API's state in the workspace: its file, its server, and what Settings shows.
 #[derive(Default)]
@@ -49,6 +90,8 @@ pub(crate) struct Api {
     pub fingerprint: Option<String>,
     /// How many clients are connected, as the server last said.
     pub clients: usize,
+    /// A phone being paired, while Pair a phone is open.
+    pub pairing: Option<Pairing>,
     /// The token uses not in the file yet, and when the file was last written (the executor's clock).
     pub(super) dirty: bool,
     saved: Option<std::time::Instant>,
@@ -184,6 +227,16 @@ impl Workspace {
             }
             Incoming::Response => return,
         };
+        // A phone's pairing has no token yet: its code is what it shows.
+        if method == aegis_api::PAIR && hello.terminal == aegis_api::PAIRING {
+            let code = params["code"].as_str().unwrap_or_default();
+            let line = match self.api_pair(code, cx) {
+                Some(token) => rpc::result(&id, json!({ "token": token })),
+                None => rpc::error(&id, codes::AUTH, "This pairing code isn't good."),
+            };
+            let _ = reply.send(line);
+            return;
+        }
         let Some(caller) = self.api_caller(&hello.terminal) else {
             let _ = reply.send(rpc::error(&id, codes::AUTH, "This token was revoked."));
             return;
@@ -1092,11 +1145,8 @@ impl Workspace {
                 if host.is_empty() || host.contains("://") {
                     return Err("Give Directly's address as host:port.".into());
                 }
-                let cert = aegis_api::tls::own(&data)?;
-                (
-                    format!("https://{host}"),
-                    Some(aegis_api::tls::pin(&cert.chain[0])),
-                )
+                let root = aegis_api::tls::root(&data)?;
+                (format!("https://{host}"), Some(aegis_api::tls::pin(&root)))
             }
         };
         // A code the other Aegis could not read is not made: tried before the token is.
@@ -1276,9 +1326,9 @@ impl Workspace {
             Err(why) => self.api.error = Some(why),
         }
         self.api.fingerprint = match store.settings.tls {
-            Tls::Own => aegis_api::tls::own(data)
+            Tls::Own => aegis_api::tls::root(data)
                 .ok()
-                .map(|c| aegis_api::tls::fingerprint(&c.chain[0])),
+                .map(|root| aegis_api::tls::fingerprint(&root)),
             _ => None,
         };
     }
@@ -1291,20 +1341,20 @@ impl Workspace {
             .is_some_and(|s| s.settings.tls != Tls::Off)
     }
 
-    /// Settings ▸ API ▸ Save certificate…: Aegis's certificate as a `.pem` the person picks the
+    /// Settings ▸ API ▸ Save certificate…: Aegis's authority as a `.pem` the person picks the
     /// place of, to install on a phone.
     pub(crate) fn save_certificate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(data) = self.data_dir.clone() else {
             return;
         };
         let folder = std::env::home_dir().unwrap_or_else(std::env::temp_dir);
-        let picked = cx.prompt_for_new_path(&folder, Some("aegis.pem"));
+        let picked = cx.prompt_for_new_path(&folder, Some("aegis-ca.pem"));
         cx.spawn_in(window, async move |ws, cx| {
             let Ok(Ok(Some(path))) = picked.await else {
                 return;
             };
-            let pem = std::fs::read_to_string(store::folder(&data).join("cert.pem"));
-            let wrote = pem.and_then(|pem| std::fs::write(&path, pem));
+            let wrote = aegis_api::tls::root_pem(&data)
+                .and_then(|pem| std::fs::write(&path, pem).map_err(|e| e.to_string()));
             ws.update_in(cx, |_, window, cx| {
                 if let Err(error) = wrote {
                     let message = format!("Couldn't save the certificate: {error}");
@@ -1382,6 +1432,134 @@ impl Workspace {
     /// The dialog that showed a token closed: its text is gone from memory.
     pub(crate) fn token_seen(&mut self) {
         self.api.shown = None;
+    }
+
+    /// The addresses a phone can reach the API at, for Pair a phone: this computer's private
+    /// ones when the API listens on every network (Tailscale's first), or the one it listens on.
+    pub(crate) fn pairing_addresses(&self) -> Vec<std::net::Ipv4Addr> {
+        let Some(store) = &self.api.store else {
+            return Vec::new();
+        };
+        match &store.settings.listen {
+            store::Listen::All => aegis_api::tls::private_addresses(),
+            store::Listen::Address(text) => text
+                .trim()
+                .parse::<std::net::Ipv4Addr>()
+                .ok()
+                .filter(|address| aegis_api::tls::is_private(*address))
+                .into_iter()
+                .collect(),
+            store::Listen::Loopback => Vec::new(),
+        }
+    }
+
+    /// Why a phone can't be paired now: the API off, only on this computer or without Aegis's
+    /// certificate ([`PAIRING_NEEDS`], which Turn it on fixes), or not listening (its reason).
+    pub(crate) fn pairing_problem(&self) -> Option<String> {
+        let Some(store) = &self.api.store else {
+            return Some("There is no data folder.".into());
+        };
+        let settings = &store.settings;
+        if !settings.enabled
+            || settings.listen == store::Listen::Loopback
+            || settings.tls != Tls::Own
+        {
+            return Some(PAIRING_NEEDS.into());
+        }
+        if self.api.server.is_none() {
+            let why = self.api.error.clone();
+            return Some(why.unwrap_or_else(|| "The API isn't listening.".into()));
+        }
+        None
+    }
+
+    /// Pair a phone: the page that gives Aegis's authority starts on `address`, and a one-time
+    /// code is made for a token with these choices. Err says what to fix.
+    pub(crate) fn start_pairing(
+        &mut self,
+        name: &str,
+        address: std::net::Ipv4Addr,
+        scope: Scope,
+        expires: Option<u64>,
+        workspaces: Option<Vec<String>>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if let Some(problem) = self.pairing_problem() {
+            return Err(problem);
+        }
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("A token needs a name.".into());
+        }
+        if name.chars().count() > store::NAME_MOST {
+            return Err(format!(
+                "A token's name is at most {} characters.",
+                store::NAME_MOST
+            ));
+        }
+        if expires.is_some_and(|at| at <= now_secs()) {
+            return Err("The expiry is already past: choose a later time.".into());
+        }
+        let data = self.data_dir.clone().ok_or("There is no data folder.")?;
+        let port = self
+            .api
+            .server
+            .as_ref()
+            .map_or(0, |server| server.addr().port());
+        let root = aegis_api::tls::root(&data)?;
+        // A pairing still open is stopped first: its page may hold the address.
+        self.api.pairing = None;
+        let page = aegis_api::pairing::Page::start(address.into(), &root, &aegis_api::computer())?;
+        self.api.pairing = Some(Pairing {
+            name: name.to_string(),
+            scope,
+            expires,
+            workspaces,
+            address,
+            port,
+            code: store::random_text("", 24),
+            made: Instant::now(),
+            page,
+            paired: None,
+        });
+        cx.notify();
+        Ok(())
+    }
+
+    /// Pair a phone closed: its page stops and its code is forgotten.
+    pub(crate) fn stop_pairing(&mut self, cx: &mut Context<Self>) {
+        if self.api.pairing.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// A phone's pairing code (`POST /v1/pair`): the one Pair a phone shows, within its life and
+    /// once, becomes a token with the dialog's choices, whose text, kept nowhere else, goes to the
+    /// phone. None for any other code.
+    fn api_pair(&mut self, code: &str, cx: &mut Context<Self>) -> Option<String> {
+        let pairing = self.api.pairing.as_ref()?;
+        let good = pairing.paired.is_none()
+            && pairing.made.elapsed() < PAIRING_LIFE
+            && store::hash(code) == store::hash(&pairing.code);
+        if !good {
+            return None;
+        }
+        let (name, scope, expires, workspaces) = (
+            pairing.name.clone(),
+            pairing.scope,
+            pairing.expires,
+            pairing.workspaces.clone(),
+        );
+        let tokens = self.api.store.as_mut()?;
+        let text = tokens
+            .mint(&name, scope, expires, workspaces, now_secs())
+            .ok()?;
+        let id = tokens.tokens.last().map(|token| token.id);
+        if let Some(pairing) = self.api.pairing.as_mut() {
+            pairing.paired = id;
+        }
+        self.tokens_changed(cx);
+        Some(text)
     }
 
     pub(crate) fn revoke_token(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -1498,7 +1676,8 @@ impl Workspace {
         }
     }
 
-    /// New files for Aegis's certificate: clients that pinned the old one stop connecting.
+    /// A new authority for Aegis's certificate: clients that pinned the old one, and phones that
+    /// installed it, stop connecting.
     pub(crate) fn renew_certificate(&mut self, cx: &mut Context<Self>) {
         if let Some(data) = self.data_dir.as_deref()
             && let Err(why) = aegis_api::tls::renew(data)

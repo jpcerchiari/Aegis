@@ -174,13 +174,13 @@ Where, Agents and Text. A change applies at once: the next session's start reads
 
 The section after Connections ([api.md](../api.md), [specs/api.md](api.md#settings--api)): *Turn on the API* (and where
 it listens, or why it can't), *Who can reach it*, *Port*, *HTTPS* (with Aegis's certificate's fingerprint, *Save
-certificate…* and *New certificate*), *Allowed web pages*, the tokens (*New token…*, *Revoke*, *Revoke all*) and
-*Connected now* (*Disconnect*). These are kept in `<data>/api/api.json`, not `config.toml`: a port, tokens and a
-certificate belong to one computer. A title-bar pill ("API", "API · 2", yellow "API off") shows while it is on.
+certificate…* and *New certificate*), *Allowed web pages*, the tokens (*New token…*, *Pair a phone…*, *Revoke*,
+*Revoke all*) and *Connected now* (*Disconnect*). These are kept in `<data>/api/api.json`, not `config.toml`: a port,
+tokens and a certificate belong to one computer. A title-bar pill ("API", "API · 2", yellow "API off") shows while it is on.
 A workspace shared with another Aegis ([aegis-to-aegis.md](aegis-to-aegis.md)) is a token among the others,
 its line saying "share of API" (or "share of a deleted workspace" once that workspace is gone); *Revoke* there is the
-Share dialog's. *New certificate*'s question also counts the shares made *Directly*: "Clients that pinned the old one
-stop connecting, 2 mirrors connected directly among them: share again for them."
+Share dialog's. *New certificate*'s question also counts the shares made *Directly*: "Clients that pinned or installed
+the old one stop connecting, 2 mirrors connected directly among them: share again for them."
 
 ## Start at login
 

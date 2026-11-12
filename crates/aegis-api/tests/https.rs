@@ -8,6 +8,7 @@ use common::*;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+use tokio_rustls::rustls::client::WebPkiServerVerifier;
 use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
 };
@@ -25,23 +26,27 @@ fn own() -> Settings {
     }
 }
 
-/// Records the certificate a server presents, and checks its signatures, but trusts any.
+/// Records the chain a server presents, and checks its signatures, but trusts any.
 #[derive(Debug)]
 struct Recording {
     provider: Arc<CryptoProvider>,
-    seen: Mutex<Option<CertificateDer<'static>>>,
+    seen: Mutex<Option<Vec<CertificateDer<'static>>>>,
 }
 
 impl ServerCertVerifier for Recording {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
-        _: &[CertificateDer<'_>],
+        intermediates: &[CertificateDer<'_>],
         _: &ServerName<'_>,
         _: &[u8],
         _: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        *self.seen.lock().unwrap() = Some(end_entity.clone().into_owned());
+        let chain = std::iter::once(end_entity)
+            .chain(intermediates)
+            .map(|cert| cert.clone().into_owned())
+            .collect();
+        *self.seen.lock().unwrap() = Some(chain);
         Ok(ServerCertVerified::assertion())
     }
 
@@ -80,8 +85,8 @@ impl ServerCertVerifier for Recording {
     }
 }
 
-/// The certificate the server on `port` shows, from a real handshake.
-fn presented(port: u16) -> CertificateDer<'static> {
+/// The chain the server on `port` shows, its certificate first, from a real handshake.
+fn presented(port: u16) -> Vec<CertificateDer<'static>> {
     let provider = Arc::new(crypto::ring::default_provider());
     let verifier = Arc::new(Recording {
         provider: provider.clone(),
@@ -194,11 +199,96 @@ fn the_mobile_shell_is_public_only_over_tls_and_the_api_still_needs_a_token() {
 }
 
 #[test]
-fn the_served_certificate_is_the_fingerprint_shown() {
+fn the_served_certificate_is_issued_by_the_authority_shown() {
     let fake = fake_with(own(), vec![], |_| {});
-    let shown = tls::fingerprint(&tls::own(fake.dir.path()).unwrap().chain[0]);
-    let got = tls::fingerprint(&presented(fake.server.addr().port()));
-    assert_eq!(got, shown);
+    let root = tls::root(fake.dir.path()).unwrap();
+    let chain = presented(fake.server.addr().port());
+    assert_eq!(chain.len(), 2, "the certificate, then the authority");
+    assert_eq!(tls::fingerprint(&chain[1]), tls::fingerprint(&root));
+    // What a phone that installed the authority checks: names, dates, the signature.
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(root).unwrap();
+    let provider = Arc::new(crypto::ring::default_provider());
+    let verifier = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider)
+        .build()
+        .unwrap();
+    for name in ["localhost", "127.0.0.1", "::1"] {
+        let name = ServerName::try_from(name).unwrap();
+        let checked = verifier.verify_server_cert(&chain[0], &[], &name, &[], UnixTime::now());
+        assert!(checked.is_ok(), "{name:?}: {checked:?}");
+    }
+}
+
+#[test]
+fn a_phone_trades_its_pairing_code_for_its_token() {
+    let fake = fake_with(own(), vec![], |_| {});
+    let pair = |code: &str| {
+        fake.call(
+            req("POST", "/v1/pair")
+                .json(&serde_json::json!({ "code": code }))
+                .agent(https_unverified()),
+        )
+    };
+    let answer = pair("right");
+    assert_eq!(answer.status, 200, "{}", answer.text);
+    assert_eq!(answer.json["token"], "tpl_paired");
+    let asked = fake.asked();
+    let last = asked.last().unwrap();
+    assert_eq!(
+        (
+            last.method.as_str(),
+            last.terminal.as_str(),
+            last.client.as_str()
+        ),
+        (aegis_api::PAIR, aegis_api::PAIRING, aegis_api::CLIENT)
+    );
+    assert_eq!(last.params["code"], "right");
+
+    let wrong = pair("wrong");
+    assert_eq!(wrong.status, 401);
+    assert_eq!(wrong.json["error"]["code"], "auth");
+    assert!(wrong.json.get("token").is_none());
+    // No code, or not JSON: refused before the UI thread is asked.
+    let before = fake.asked().len();
+    let empty = fake.call(
+        req("POST", "/v1/pair")
+            .json(&serde_json::json!({}))
+            .agent(https_unverified()),
+    );
+    assert_eq!(empty.status, 400);
+    let text = fake.call(
+        req("POST", "/v1/pair")
+            .raw("text/plain", "right")
+            .agent(https_unverified()),
+    );
+    assert_eq!(text.status, 415);
+    assert_eq!(fake.asked().len(), before);
+
+    // A code can't be guessed: wrong ones count against the address, and past the limit even the
+    // right one waits.
+    let mut status = 401;
+    for _ in 0..20 {
+        status = pair("wrong").status;
+        if status == 429 {
+            break;
+        }
+    }
+    assert_eq!(status, 429);
+    let limited = pair("right");
+    assert_eq!(limited.status, 429);
+    assert!(limited.header("retry-after").is_some());
+}
+
+#[test]
+fn pairing_needs_https() {
+    let fake = fake(vec![], |_| {});
+    let answer = fake.call(req("POST", "/v1/pair").json(&serde_json::json!({ "code": "right" })));
+    assert_eq!(answer.status, 401);
+    assert!(
+        fake.asked()
+            .iter()
+            .all(|seen| seen.method != aegis_api::PAIR)
+    );
 }
 
 #[test]
@@ -221,7 +311,7 @@ fn the_persons_certificate_is_served() {
         ..Default::default()
     };
     let fake = fake_with(settings.clone(), vec![], |_| {});
-    let got = tls::fingerprint(&presented(fake.server.addr().port()));
+    let got = tls::fingerprint(&presented(fake.server.addr().port())[0]);
     assert_eq!(got, tls::fingerprint(cert.der()));
     // A key that doesn't load keeps it from starting, and the error names the file.
     std::fs::write(&key_file, "not a key").unwrap();

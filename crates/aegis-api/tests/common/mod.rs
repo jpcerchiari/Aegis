@@ -316,6 +316,11 @@ pub fn fake_with(settings: Settings, tokens: Vec<Token>, tweak: impl FnOnce(&mut
                     continue;
                 }
                 aegis_api::STATE => rpc::result(&id, serde_json::to_value(sample()).unwrap()),
+                // A phone's pairing: "right" is the code the dialog shows.
+                aegis_api::PAIR if params["code"] == "right" => {
+                    rpc::result(&id, serde_json::json!({ "token": "tpl_paired" }))
+                }
+                aegis_api::PAIR => rpc::error(&id, codes::AUTH, "This pairing code isn't good."),
                 aegis_api::TERMINAL => {
                     let block = params["block"].as_str().unwrap_or_default();
                     let all = lent.lock().unwrap().clone();
@@ -774,7 +779,8 @@ pub fn http() -> ureq::Agent {
     config.into()
 }
 
-/// A client for a server whose certificate it doesn't check (Aegis's own is self-signed).
+/// A client for a server whose certificate it doesn't check (Aegis's own is signed by an authority
+/// a test doesn't install).
 pub fn https_unverified() -> ureq::Agent {
     let tls = ureq::tls::TlsConfig::builder()
         .disable_verification(true)

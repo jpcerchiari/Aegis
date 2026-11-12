@@ -71,9 +71,9 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
 | 12 | No WSL, só a distribuição padrão, como o Templum já fazia: um único "WSL" nas listas de shell | O usuário trabalha com uma distribuição só, e o primeiro PR fica menor. Uma entrada por distribuição (como o nodeterm, por `wsl.exe --list --quiet`, deixando de fora as do Docker) pode entrar depois sem desfazer nada | Vale desde 2026-11-09 |
 | 13 | O app de celular é um **app web (PWA) servido pelo próprio Aegis**, cliente da API que já existe (eventos, tela e digitação dos terminais, tokens, TLS próprio). O celular abre o endereço do PC no navegador e instala como atalho | Um código só para Android e iOS, sem loja nem build de celular, e o app vem do próprio PC: "sem intermediário" ao pé da letra. Custos aceitos: instalar o certificado do Aegis no celular (*Save certificate…*) e notificação só com o app aberto, porque o Web Push passa pelo Google ou pela Apple. Um app Android pequeno pode vir depois, por cima da mesma API, se o aviso com o app fechado fizer falta | Vale desde 2026-11-09. Falta saber se o celular é Android ou iPhone: no iPhone, o certificado vira um perfil a instalar e a confiar em *Ajustes* |
 | 14 | O celular alcança o Aegis pela **rede local e pelo Tailscale**. A API escuta nos dois endereços, sempre com TLS, e o pareamento oferece os dois | Escolha do usuário, para usar fora de casa sem abrir porta no roteador. Aceito conscientemente: o Tailscale é um intermediário na troca de chaves e, quando a conexão direta falha, no tráfego (que vai criptografado pelo WireGuard e pelo TLS do Aegis) | Vale desde 2026-11-09 |
-| 15 | O Aegis vira a **própria autoridade certificadora**. Gera uma raiz uma vez (chave privada só do usuário, como a `key.pem` de hoje) e emite com ela o certificado do servidor para `localhost`, `127.0.0.1`, `::1`, os endereços da rede local e o do Tailscale, emitindo outro sozinho quando um endereço muda. O celular instala só a raiz, uma vez. O *Save certificate…* passa a gravar a raiz, e o Aegis to Aegis passa a conferir a impressão digital da raiz | Única opção que atende aos dois caminhos da decisão 14 sem terceiros. **Cuidado:** uma raiz instalada no celular pode assinar qualquer site; se a chave vazar, dá para interceptar o celular. Por isso a raiz leva *Name Constraints* limitando-a a IPs privados (`10/8`, `172.16/12`, `192.168/16`, `100.64/10` do Tailscale, `127/8`, `::1`), e a chave nunca sai do PC. Conferir na implementação se o Android e o iOS respeitam essa restrição numa raiz instalada pelo usuário | Vale desde 2026-11-09 |
-| 16 | Pareamento por **dois QR** num diálogo do Aegis. O primeiro abre uma página **HTTP**, só na rede local e só com o diálogo aberto, que entrega a raiz (decisão 15) e mostra a impressão digital, para comparar com a que o Aegis mostra antes de instalar. O segundo abre o app em HTTPS com um **código de uso único**, que o app troca por um token com o alcance escolhido no diálogo (todos os workspaces ou um só; os escopos da API: read, control, full) | Tudo dentro do Aegis, sem e-mail nem mensageiro. O risco do HTTP (alguém na rede trocar a raiz no caminho) some com a comparação da impressão digital, e a página só existe durante o pareamento | Vale desde 2026-11-09 |
-| 17 | A primeira versão do app do celular tem **status e terminais**: a lista de agentes com a bolinha de status (`GET /v1/events`) e, ao abrir um, a tela ao vivo (`GET /v1/terminals/{block}/stream`) e a digitação (`terminal_input`). Responder um pedido é digitar no terminal | O terminal resolve tudo, inclusive os pedidos de permissão, e é o recurso principal do nodeterm no celular. A caixa de pedidos com botões (`POST /v1/requests/{id}/answer`) fica para uma segunda versão. Digitar exige token **full**: no diálogo de pareamento (decisão 16), essa escolha tem que ser explícita | Vale desde 2026-11-09 |
+| 15 | O Aegis vira a **própria autoridade certificadora**. Gera uma raiz uma vez (chave privada só do usuário, como a `key.pem` de hoje) e emite com ela o certificado do servidor para `localhost`, `127.0.0.1`, `::1`, os endereços da rede local e o do Tailscale, emitindo outro sozinho quando um endereço muda. O celular instala só a raiz, uma vez. O *Save certificate…* passa a gravar a raiz, e o Aegis to Aegis passa a conferir a impressão digital da raiz | Única opção que atende aos dois caminhos da decisão 14 sem terceiros. **Cuidado:** uma raiz instalada no celular pode assinar qualquer site; se a chave vazar, dá para interceptar o celular. Por isso a raiz leva *Name Constraints* limitando-a a IPs privados (`10/8`, `172.16/12`, `192.168/16`, `100.64/10` do Tailscale, `127/8`, `::1`), e a chave nunca sai do PC. Conferir na implementação se o Android e o iOS respeitam essa restrição numa raiz instalada pelo usuário | Vale desde 2026-11-09. Implementada em 2026-11-12, sem compilar localmente (o CI confere). Falta conferir no Android e no iPhone se eles respeitam as *Name Constraints* |
+| 16 | Pareamento por **dois QR** num diálogo do Aegis. O primeiro abre uma página **HTTP**, só na rede local e só com o diálogo aberto, que entrega a raiz (decisão 15) e mostra a impressão digital, para comparar com a que o Aegis mostra antes de instalar. O segundo abre o app em HTTPS com um **código de uso único**, que o app troca por um token com o alcance escolhido no diálogo (todos os workspaces ou um só; os escopos da API: read, control, full) | Tudo dentro do Aegis, sem e-mail nem mensageiro. O risco do HTTP (alguém na rede trocar a raiz no caminho) some com a comparação da impressão digital, e a página só existe durante o pareamento | Vale desde 2026-11-09. O endereço da página foi ajustado pela 30. Implementada em 2026-11-12, sem compilar localmente |
+| 17 | A primeira versão do app do celular tem **status e terminais**: a lista de agentes com a bolinha de status (`GET /v1/events`) e, ao abrir um, a tela ao vivo (`GET /v1/terminals/{block}/stream`) e a digitação (`terminal_input`). Responder um pedido é digitar no terminal | O terminal resolve tudo, inclusive os pedidos de permissão, e é o recurso principal do nodeterm no celular. A caixa de pedidos com botões (`POST /v1/requests/{id}/answer`) fica para uma segunda versão. Digitar exige token **full**: no diálogo de pareamento (decisão 16), essa escolha tem que ser explícita | Vale desde 2026-11-09. O pareamento mostra o aviso do *Full* e parte de *Control* |
 | 18 | **Ordem do trabalho:** 1) WSL, primeiro PR (decisões 9, 10 e 12); 2) celular, primeira versão (13 a 17); 3) não deixar o PC dormir enquanto um agente trabalha; 4) paleta de comandos; 5) depois, avaliar sessões que sobrevivem ao fechar o app. **Fora:** ditado com Whisper, projetos por SSH, blocos de página web e de vídeo, GitHub Issues no kanban | Os dois objetivos que motivaram o fork vêm primeiro. O item 3 protege o celular: com o PC dormindo, ele perde o acesso, inclusive pelo Tailscale. Itens 3 e 4 são pequenos e não existem no Aegis (conferido no código em 2026-11-09). O item 5 é valioso, mas no Windows exige um processo separado segurando os terminais | Vale desde 2026-11-09 |
 | 19 | O celular principal é **Android**, e o app tem que funcionar também no **iPhone**. A página do pareamento (decisão 16) entrega a raiz nos formatos que os dois aceitam: `.crt` (DER, `application/x-x509-ca-cert`) para o Android e `.mobileconfig` para o iPhone, cada um com o passo a passo na tela. No Android 11 em diante, o navegador só baixa o arquivo, e a instalação é em *Configurações ▸ Segurança ▸ Criptografia e credenciais ▸ Instalar certificado ▸ Certificado CA*. No iPhone, instalar o perfil e depois ligar a raiz em *Ajustes ▸ Geral ▸ Sobre ▸ Ajustes de Confiança de Certificados* | Resposta do usuário. O app web (decisão 13) já atende os dois; o que muda é o pareamento e onde testar: no Android, no aparelho; no iPhone, no Simulador do Xcode no Mac do usuário, até haver um aparelho | Vale desde 2026-11-09 |
 | 20 | O Aegis **não tem tarefa no gerenciador de tarefas do trabalho** | Projeto pessoal | Vale desde 2026-11-09 |
@@ -85,6 +85,9 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
 | 26 | O Aegis começa a própria numeração: o primeiro release é o **`v0.1.0`**. `[workspace.package] version` em `0.1.0`, o `Cargo.lock` atualizado só nas 9 entradas do Aegis, e o `CHANGELOG.md` com a seção `## 0.1.0` | Coerente com o Aegis independente. Nada dependia da numeração do Templum: a pasta de dados e a identidade do app já são outras, e os testes usam versões escritas à mão | Vale desde 2026-11-09 |
 | 27 | O CI de PR volta a **compilar e testar nos três sistemas**: `.github/workflows/ci.yml` (o antigo `fork.yml`, renomeado) roda em todo PR e em todo push no `main`. Formatação e licenças no Linux; build, clippy com `-D warnings` e testes no Windows, no macOS e no Linux. Os testes rodam pelo `cargo nextest` com `--retries 2`, que repete o que falhou e marca como FLAKY sem reprovar; os doctests, que o nextest não roda, pelo `cargo test --doc`. O cache só é salvo no `main`, com `cache-on-failure` | O motivo da decisão 6 (minutos do plano, máquinas de 2 núcleos) deixou de valer com o repositório público. O `--retries 2` responde aos testes do autor que falham ao acaso (ver [Achados do primeiro CI](#achados-do-primeiro-ci-2026-11-09)). PR só usa o cache dele mesmo e o do `main`, e cache de PR gastaria a cota de 10 GB do repositório | Vale desde 2026-11-09. Escrito a partir do CI do autor, sem rodar ainda |
 | 28 | **Identidade própria:** o ícone é o escudo do item Aegis de *Risk of Rain 2*, desenhado do zero em SVG (`crates/aegis/icons/icon.svg`, e `icon-small.svg` para 16 a 48 px), reconhecível pelos traços do item: escudo facetado prateado, capuz e aro em V dourados, o anel na haste e, em volta, a barreira como uma casca de luz dourada. Estilo de ícone de app: sem contorno, volume por luz, sombra e espessura do metal, e um fundo roxo iluminado de cima. Sai o `icon-dark.svg`: o fundo escuro serve nos dois temas. O README fala do próprio Aegis (o uso pensado, o roadmap da decisão 18) e tem no cabeçalho a frase do item, *"Healing past full grants you a temporary barrier."*, com uma nota de que o projeto não tem vínculo com o jogo | Pedido do usuário: o ícone tinha que ser reconhecível como o item, não um logo simplificado. Desenho próprio, não decalcado: a arte do item é da Hopoo Games, e o repositório público distribui releases | Vale desde 2026-11-09 |
+| 29 | O token que o celular recebe no pareamento **fica guardado no aparelho** (no `localStorage` do app), até ser revogado no Aegis ou apagado no próprio app por **Esquecer este aparelho** | Abrir o app tem que ser imediato, sem escanear de novo a cada vez. Aceito: quem pegar o celular desbloqueado entra com o alcance do token, por isso o diálogo de pareamento deixa claro o alcance e a revogação fica em *Settings ▸ API*, como a de qualquer token | Vale desde 2026-11-12 |
+| 30 | O diálogo de pareamento tem **um seletor de endereço** para os dois QR, com os endereços privados deste computador e o do **Tailscale primeiro**. A página HTTP do QR 1 escuta **só no endereço escolhido** (nunca em `0.0.0.0`) e só com o diálogo aberto | Um app web fica preso ao endereço por onde foi instalado (ver [API existente](#api-existente)): instalado pelo Tailscale, funciona em casa e fora. Pelo Tailscale, a página HTTP ainda vai cifrada pelo WireGuard. Ajusta a decisão 16, que punha a página só na rede local | Vale desde 2026-11-12 |
+| 31 | O diálogo de pareamento tem os campos do *New token…* (nome, alcance, workspaces, validade), com a validade em **90 dias** por padrão. Vencido, o celular é pareado de novo pelo QR 2 | Escolha do usuário: um celular perdido e esquecido para de entrar sozinho em três meses, e parear de novo é rápido | Vale desde 2026-11-12 |
 
 ## Feito
 
@@ -115,6 +118,11 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
   script `#!/bin/sh` que chama `sleep`, que o sistema vê com o nome `claude`.
   O [ensaio de release](https://github.com/jpcerchiari/Aegis/actions/runs/42682578389) empacotou os cinco
   alvos. A etapa de publicação ficou de fora porque o disparo foi manual.
+- **Primeiro release, [v0.1.0](https://github.com/jpcerchiari/Aegis/releases/tag/v0.1.0)** (2026-11-10, commit
+  `acf3cd1`), com o CI do `main` verde nos três sistemas. São 13 arquivos, cada um com seu `.sha256` e com
+  o `digest` da API do GitHub, e os nomes batem com os que `files()` (`crates/aegis-update/src/install.rs`)
+  procura. O `PKGBUILD` aponta para o `.tar.gz` do próprio release. A troca automática de versão só pode ser
+  testada de verdade no próximo release: um Aegis 0.1.0 instalado tem que achar e instalar o 0.1.1.
 - **Linha de base local no Mac Apple Silicon:** Rust 1.99.0. Formatação, build do workspace
   e Clippy com `-D warnings` passaram. O binário abriu, renderizou e fechou normalmente no
   ensaio gráfico `--bench-zoom=empty`. A suíte completa teve três falhas. O teste de
@@ -125,6 +133,38 @@ inteiro**. Ao fechar uma decisão ou terminar uma etapa, atualize-o.
   Uma sondagem local confirmou que o `sysinfo` vê os argumentos de `/bin/sh` e `/bin/sleep`
   mas recebe o ambiente vazio. Uma cópia de `sleep` no diretório temporário expõe a variável
   `AEGIS_TERMINAL`. A busca por processos órfãos depende dessa variável.
+- **O Aegis virou a própria autoridade certificadora** (decisão 15), em 2026-11-12, sem compilar
+  localmente; o CI do PR confere. Em `crates/aegis-api/src/tls.rs`:
+  - **Raiz:** `<data>/api/ca.pem` e `ca-key.pem`, ECDSA P-256, dez anos. Tem *Name Constraints*:
+    `localhost` e os IPs da decisão 15.
+  - **Certificado do servidor:** emitido em memória a cada início, sem sujeito, por 397 dias. Vale para
+    `localhost`, `127.0.0.1`, `::1` e os IPv4 privados das placas de rede, que o `sysinfo` lista com a
+    feature `network`. Os endereços são relidos no handshake, no máximo a cada 10 s. Outro certificado é
+    emitido quando um endereço muda ou faltam 30 dias para ele vencer.
+  - **O que mudou junto:**
+    - O servidor manda a raiz depois do certificado.
+    - O *Save certificate…* grava a raiz (`aegis-ca.pem`).
+    - O *New certificate* troca a raiz.
+    - O Aegis to Aegis passou a fixar a raiz. O `Pinned` de `client/trust.rs` aceita o certificado que a
+      raiz emitiu, conferido pelo webpki com assinatura, datas e *Name Constraints*.
+  - **Efeito para quem usa:** códigos *Directly* feitos antes desta versão fixavam o certificado antigo e
+    pedem um código novo, uma vez.
+  - **Conferido nos testes:** um certificado que a raiz emitisse para um IP público é recusado por
+    qualquer nome.
+- **Pareamento do celular por dois QR** (decisões 16, 17, 19, 29, 30 e 31), em 2026-11-12, sem compilar
+  localmente; o CI do PR confere.
+  - **No Aegis:** *Settings ▸ API ▸ Phone ▸ Pair a phone…*. Com a API desligada, só neste computador ou
+    sem *Aegis's certificate*, o *Turn it on* ajusta antes. O diálogo tem nome, endereço (os privados
+    deste computador, Tailscale primeiro), alcance, validade (90 dias) e workspaces. *Show QR codes* mostra
+    os dois QR, desenhados com o `qrcodegen` (MIT, sem dependências), e a impressão digital da raiz em 4
+    linhas. Fechar o diálogo para a página e esquece o código. Código em `crates/aegis/src/settings/api.rs`
+    e `crates/aegis/src/workspace/api.rs`.
+  - **QR 1:** `crates/aegis-api/src/pairing.rs` serve a página HTTP só no endereço escolhido, numa porta
+    própria, com `aegis-ca.crt` (DER) e `aegis-ca.mobileconfig`, o passo a passo e a impressão digital.
+  - **QR 2:** `https://<endereço>:<porta>/mobile/#code=…`, código de 192 bits que vale uma vez, por até
+    10 minutos, com o diálogo aberto. O app troca o código em `POST /v1/pair` (só HTTPS, sem token,
+    contado pelo limitador como um token errado) e guarda o token no `localStorage`.
+  - **No app:** *Forget this phone* apaga o token guardado. Um `401` mostra de novo a tela de conexão.
 
 ## Ponto de partida: WSL
 
@@ -227,23 +267,25 @@ os pontos de partida para cobrir os caminhos nativo e WSL.
 
 ### Cliente móvel em teste
 
-O Aegis já serve o cliente em `/mobile/` quando a API está em HTTPS. Em **Settings ▸ API**,
-ative a API, use um certificado que o navegador confie para o endereço escolhido e crie um
-token. Abra `https://<endereço>:7411/mobile/` (ou a porta configurada) e cole o token.
-`Read` acompanha agentes e terminais. `Full` também permite colar texto, digitar caracteres
-e enviar teclas. O token fica na memória da página e precisa ser informado de novo após
-recarregar. A página e os ícones são públicos nesse endereço. A API continua exigindo o token
-e aplicando seu escopo e a lista de workspaces.
+O Aegis serve o cliente em `/mobile/` quando a API está em HTTPS. O caminho normal é
+**Settings ▸ API ▸ Pair a phone…**: o QR 1 instala a raiz (decisão 19 tem o caminho no Android e
+no iPhone), o QR 2 abre o app, que troca o código pelo token e o guarda. Continua possível colar
+um token feito em *New token…*. `Read` acompanha agentes e terminais. `Full` também permite colar
+texto, digitar caracteres e enviar teclas. A página e os ícones são públicos nesse endereço. A API
+continua exigindo o token e aplicando seu escopo e a lista de workspaces.
 
 O cliente usa a mesma origem para os eventos e a tela do terminal, sem bibliotecas externas.
 O ensaio em Chrome com viewport móvel verificou os critérios de instalação do manifesto,
 os escopos, mudanças no status do agente e nas linhas do terminal, envio de texto e teclas
 e revogação do token. A instalação em Android e iPhone ainda precisa ser testada.
 
-**Próximo passo do celular.** Implementar a autoridade certificadora e a renovação da folha
-para LAN e Tailscale (decisões 14 e 15). Depois, ligar o pareamento por dois QR e a troca de
-código de uso único à página (decisões 16 e 19). Até lá, a configuração de TLS e do token é
-manual.
+**Próximo passo do celular.** A autoridade certificadora e o pareamento por QR estão feitos (ver
+Feito). Falta conferir em aparelho de verdade:
+
+- se o Android e o iPhone respeitam as *Name Constraints* numa raiz instalada pelo usuário;
+- se o app instalado na tela inicial do iPhone guarda o token: o iOS pode separar o armazenamento do
+  app instalado do Safari, e aí o pareamento tem que ser feito já pelo app instalado;
+- a instalação do `.crt` no Android e do `.mobileconfig` no iPhone, seguindo o passo a passo da página.
 
 ### API existente
 
@@ -266,8 +308,8 @@ O app de celular seria mais um cliente dessa API, falando direto com o PC.
 
 **Achados para o app web (decisões 13 e 14):**
 
-- **O certificado só vale para `localhost`, `127.0.0.1` e `::1`** (`make` em
-  `crates/aegis-api/src/tls.rs`). O navegador do celular recusa o endereço da rede local e o do
+- **O certificado só valia para `localhost`, `127.0.0.1` e `::1`** (resolvido pela decisão 15: ver
+  Feito). O navegador do celular recusa o endereço da rede local e o do
   Tailscale mesmo com o certificado instalado, porque o nome não confere; e um PWA (service worker,
   instalação) só funciona com certificado válido. O endereço da rede local ainda muda com o DHCP.
   Para o Aegis to Aegis isso não pesa, porque ele confere pela impressão digital.

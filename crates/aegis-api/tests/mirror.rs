@@ -285,8 +285,7 @@ fn a_changed_pin_and_a_tunnel_that_isnt_aegis_are_refused() {
         ..Default::default()
     };
     let fake = fake_with(own, vec![token], |_| {});
-    let certificate = tls::own(fake.dir.path()).unwrap();
-    let pin = tls::pin(&certificate.chain[0]);
+    let pin = tls::pin(&tls::root(fake.dir.path()).unwrap());
     assert!(fake.base.starts_with("https://"));
 
     let (mirror, _) = mirror(Keys::without_keyring(None));

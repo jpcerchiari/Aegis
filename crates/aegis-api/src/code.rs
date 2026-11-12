@@ -185,7 +185,7 @@ impl Code {
             Trust::Pinned(pin) => {
                 let pair = |i: usize| pin[i * 2..i * 2 + 2].to_ascii_uppercase();
                 format!(
-                    "{host} · pins Aegis's certificate {}:{}:…:{}",
+                    "{host} · pins Aegis's authority {}:{}:…:{}",
                     pair(0),
                     pair(1),
                     pair(31)
@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(pinned.host(), "192.168.1.5:7411");
         assert_eq!(
             pinned.said(),
-            "192.168.1.5:7411 · pins Aegis's certificate AB:CD:…:9F"
+            "192.168.1.5:7411 · pins Aegis's authority AB:CD:…:9F"
         );
         let local = decode(&encode("http://127.0.0.1:7411", &key, None)).unwrap();
         assert_eq!(local.said(), "127.0.0.1:7411 · plain HTTP to this computer");
