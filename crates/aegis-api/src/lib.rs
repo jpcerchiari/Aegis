@@ -7,6 +7,7 @@ pub mod code;
 mod events;
 pub mod model;
 pub mod openapi;
+pub mod pairing;
 pub mod registry;
 pub mod server;
 pub mod store;
@@ -37,6 +38,12 @@ pub const WATCH: &str = "aegis/watch";
 pub const TERMINAL: &str = "aegis/terminal";
 /// The method of the notification that says a client connected or left: the pill counts them.
 pub const CLIENTS: &str = "aegis/clients";
+/// The method of the request a phone's pairing sends the UI thread (`POST /v1/pair`), params
+/// `{"code": …}`, from the terminal [`PAIRING`]: the glue answers `{"token": …}` for the code its
+/// Pair a phone dialog shows, once, or an `AUTH` error.
+pub const PAIR: &str = "aegis/pair";
+/// The terminal a pairing request comes from: it has no token yet.
+pub const PAIRING: &str = "pair";
 
 /// The header a mirror's every request carries: a random value new at each connect or reconnect.
 /// A share's token opening an event stream with a new one ends the streams and connections of the

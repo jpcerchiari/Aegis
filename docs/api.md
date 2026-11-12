@@ -55,9 +55,17 @@ HTTPS is on (Aegis's own certificate, or yours).
   `X-Forwarded-For`, so the address Aegis shows is whatever the client sends; only an HTTP proxy that appends the
   header tells clients apart.
 - **Tailscale, a VPN, a reverse proxy:** the same: point it at the port.
-- **The LAN:** *Who can reach it* ▸ every network or one address; HTTPS switches to Aegis's certificate. Its SHA-256
-  fingerprint is in Settings (*Copy*); *Save certificate…* writes a `.pem` to install on a phone. *New certificate*
-  makes another (clients that pinned the old one stop connecting).
+- **The LAN, Tailscale:** *Who can reach it* ▸ every network or one address; HTTPS switches to Aegis's certificate,
+  which Aegis's own authority issues for `localhost` and this computer's private addresses (the LAN's, Tailscale's),
+  and again when they change. *Save certificate…* writes the authority as a `.pem`: installed on a phone or another
+  computer, it makes a browser trust Aegis at those addresses. Its SHA-256 fingerprint is in Settings (*Copy*), to
+  compare before installing it, or to pin. *New certificate* makes another authority (clients that pinned or
+  installed the old one stop connecting).
+- **A phone:** *Settings ▸ API ▸ Pair a phone…* shows two QR codes. The first opens a page, on the address you chose
+  and only while the dialog is open, that gives the authority (`.crt` for Android, `.mobileconfig` for an iPhone)
+  with its fingerprint, to compare with the one beside the code. The second opens Aegis Mobile at `/mobile/` with a
+  one-time code, which the app trades for a token (`POST /v1/pair`, below) and keeps. Choose the Tailscale address to
+  use the phone away from home.
 
 ## Examples
 
@@ -111,15 +119,15 @@ async function connect() {
 connect();
 ```
 
-Node can send the header itself, and pin Aegis's certificate with the fingerprint Settings shows:
+Node can send the header itself, and trust Aegis's authority from the file *Save certificate…* wrote (curl's
+`--cacert aegis-ca.pem` does the same):
 
 ```js
+import fs from 'node:fs';
 import https from 'node:https';
-const pin = 'AB:CD:…';                              // Settings ▸ API ▸ Certificate
 https.get('https://192.168.1.5:7411/v1/events', {
   headers: { Authorization: `Bearer ${token}` },
-  checkServerIdentity: (host, cert) =>
-    cert.fingerprint256 === pin ? undefined : new Error('Aegis\'s certificate changed'),
+  ca: fs.readFileSync('aegis-ca.pem'),              // Settings ▸ API ▸ Save certificate…
 }, res => res.on('data', chunk => process.stdout.write(chunk)));
 ```
 
@@ -161,6 +169,10 @@ off when that token is revoked (Revoke or Revoke all) or expires, and a notifica
 token '<token name>', was turned off." A rule the token had turned off itself is told of too ("…stays off.") and stays off.
 Until the sweep (every few seconds) turns it off, a run of a revoked or expired token's rule is Skipped "Target missing:
 its token was revoked". Saving it yourself in the editor (or deleting it) makes it yours: it stays.
+
+**Pairing** (`POST /v1/pair`, HTTPS only, no token): `{"code":"…"}`, the one-time code in Pair a phone's second QR
+code, answers `{"token":"tpl_…"}` once, within 10 minutes, while the dialog is open. Any other code is a failed
+authentication: `401`, counted like a wrong token.
 
 A **ticket** (`POST /v1/tickets` → `{"ticket":"tkt_…","expires_in":30}`) opens one `GET /v1/events?ticket=…` or one
 `GET /v1/terminals/{block}/stream?ticket=…` within 30 seconds, once, with its token's scope and workspaces. It is
@@ -544,8 +556,8 @@ A **share** lets another Aegis mirror one workspace. It is an API token limited 
 made by the workspace's *Share…* (or `share_workspace`), kept with the share's details in `api.json`; its id is `s<token id>`,
 and revoking the token revokes the share. The answer of `share_workspace` holds the **connection code** once, in
 `code`: `tplc1_` and the base64url of `{"url":…,"token":"tpl_…","pin":…}` (`pin`, the SHA-256 of Aegis's
-certificate, only for a share made *Directly*). Aegis keeps only the token's fingerprint, so the code cannot be
-shown again. `way` is `pinned` (the other computer pins Aegis's certificate: `address` is `host:port` and the API
+authority, only for a share made *Directly*). Aegis keeps only the token's fingerprint, so the code cannot be
+shown again. `way` is `pinned` (the other computer pins Aegis's authority: `address` is `host:port` and the API
 must listen on every network with Aegis's certificate) or `public` (a tunnel or proxy with a public certificate:
 `address` is `https://…`, or `http://` to this computer for an `ssh -L` forward). Refusals say what to fix: "A pinned
 share needs HTTPS with Aegis's certificate: Settings ▸ API ▸ HTTPS.", "The address must start with https://.".
@@ -648,7 +660,7 @@ the tool `share_workspace`). The Share dialog opens at the workspace's shares; N
 - **Expires:** 30 days by default; shorter is safer. Three days before, the mirror's banner says so.
 - **Way in** (how the other computer reaches this one): *Through a tunnel or proxy* (a public `https://` address, for
   [cloudflared](#2-cloudflared) and the like; the API stays on this computer only) or *Directly* (`host:port` of this
-  computer, which pins Aegis's certificate; the API must listen on every network with Aegis's certificate,
+  computer, which pins Aegis's authority; the API must listen on every network with Aegis's certificate,
   Settings ▸ API ▸ HTTPS). Make code says what to fix when the API doesn't fit.
 - **Make code** shows the connection code once (Copy); **Done** goes back to the shares, the new one listed. Aegis keeps only a fingerprint, so a lost code means a new
   share. The sidebar tile of a shared workspace gets a small cast mark while another computer mirrors it.
@@ -674,7 +686,7 @@ The tunnel's provider sees the traffic (HTTPS ends at its edge), including what 
 ### 3. Connect (the mirror)
 
 Sidebar ▸ **Connect to a Aegis…** (or the Home's plug button), paste the code. The line under the field says where it
-goes and how it checks (`aegis.example.com · checks its public certificate`, or `· pins Aegis's certificate
+goes and how it checks (`aegis.example.com · checks its public certificate`, or `· pins Aegis's authority
 AB:CD:…`). **Network** (folded) takes the Cloudflare Access Client ID and Secret, and a proxy. The key is kept in this
 computer's keyring (the Keychain, the Credential Manager or the Secret Service); with no keyring you may keep it in a
 file only you can read (a copy of the data folder would carry it) or let it last until Aegis quits. Connect (or Enter)
@@ -725,8 +737,8 @@ has past 50.
 
 ### 4. What each way in checks
 
-- **Pinned** (*Directly*): the certificate's SHA-256 must be the one in the code. After *New certificate* on home, share
-  again and paste the new code.
+- **Pinned** (*Directly*): the authority's SHA-256 must be the one in the code, and home's certificate one it
+  issued. After *New certificate* on home, share again and paste the new code.
 - **Public** (*Through a tunnel or proxy*): the certificate must be valid for the name, signed by an authority the
   system trusts (then Mozilla's list). A company proxy that reads HTTPS shows its own authority: Aegis refuses it
   unless you accept it for that remote ("Connect anyway"), because it could read your key and what you type.

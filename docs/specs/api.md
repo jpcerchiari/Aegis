@@ -70,7 +70,8 @@ Aegis never runs a server of its own: the person points a tunnel, a proxy or a V
 - Part 2's connection UI (a remote workspace in the sidebar): its own design,
   [aegis-to-aegis.md](aegis-to-aegis.md).
 - A mobile app, or a web page served by Aegis (the person: "eu disse que queria só a api e o sistema de conexão",
-  only the API and the connection system): a phone reaches Aegis through the API with a client of its own.
+  only the API and the connection system): a phone reaches Aegis through the API with a client of its own. (Revised
+  by the fork: Aegis Mobile at `/mobile/`, paired by QR code; docs/fork/README.md, decisions 13 to 19 and 29 to 31.)
 
 *The designer's call:*
 
@@ -109,7 +110,7 @@ A new section after Connections (*the designer's call*: next to the other doors)
 | Who can reach it | Dropdown: **This computer only (127.0.0.1)**, **Every network of this computer (0.0.0.0)**, **One address…** (a text field, an IP of this computer) | `listen` |
 | Port | Number 1024–65535, default **7411** (*the designer's call*: fixed, so a tunnel's config stays right) | `port` |
 | HTTPS | Dropdown: **Off: a tunnel or proxy gives HTTPS** (only with This computer only), **Aegis's certificate**, **My certificate…** (two file fields: certificate and private key, PEM) | `tls` |
-| Certificate | With Aegis's certificate: its SHA-256 fingerprint (`AB:CD:…`, 32 pairs) with **Copy**, **Save certificate…** (writes a `.pem` to install on a phone) and **New certificate** (asks first: "Clients that pinned the old one stop connecting.") | `<data>/api/cert.pem` |
+| Certificate | With Aegis's certificate: its authority's SHA-256 fingerprint (`AB:CD:…`, 32 pairs) with **Copy**, **Save certificate…** (writes the authority as a `.pem` to install on a phone) and **New certificate** (a new authority; asks first: "Clients that pinned or installed the old one stop connecting.") | `<data>/api/ca.pem` |
 | Allowed web pages | Text, one origin per line (`https://dash.example.com`); empty: no web page may call the API (CORS off) | `origins` |
 
 Picking **Every network** or **One address…** while HTTPS is Off switches HTTPS to Aegis's certificate and says so
@@ -128,6 +129,22 @@ says: "Plain HTTP on this computer: give HTTPS with your tunnel or proxy (cloudf
   the end of that day, local time), Never); **Workspaces** (All, or chosen ones with toggles). **Make token**.
 - The dialog then shows the token once, whole, in the terminal's font, with **Copy** and the line "Copy it now:
   Aegis keeps only a fingerprint of it and can't show it again." **Done** closes it; the text is gone from memory.
+- **Pair a phone…** (the row **Phone**) makes a token for Aegis Mobile without typing it. With the API off, only on
+  this computer or without Aegis's certificate, it asks first: "Pairing needs the API on every network, with Aegis's
+  certificate." **Turn it on** does that and opens the dialog. The dialog: **Name** (default "Phone"); **The phone
+  reaches this computer at** (this computer's private addresses, Tailscale's first and marked "at home and away",
+  a LAN's "this network only"; with *One address…*, that one); **Can**, **Expires** (default **90 days**) and
+  **Workspaces**, as in New token…. **Show QR codes** opens the second dialog, two QR codes side by side:
+  1. **Install Aegis's authority:** `http://<address>:<port>/`, a page served on that address only, on a port of its
+     own, while the dialog is open: the authority as `aegis-ca.crt` (DER, for Android) and `aegis-ca.mobileconfig`
+     (for an iPhone), the steps for each, and its fingerprint, which the dialog shows beside the code in 4 lines of 8
+     pairs: a fingerprint that differs means someone on the network swapped the file. Plain HTTP, since the phone
+     doesn't trust Aegis yet; through Tailscale, WireGuard encrypts it.
+  2. **Open Aegis Mobile:** `https://<address>:<port>/mobile/#code=…`, with a one-time code of 192 random bits after
+     `#`, which a browser never sends to a server. The app takes it out of the address, trades it at `POST /v1/pair`
+     for a token with the dialog's choices, and keeps the token (*Forget this phone* in the app removes it).
+  Under them: "Waiting for the phone…", then "Paired: the phone has its token, in Tokens above." **Done** (or closing
+  it) stops the page and forgets the code; the token stays in the list, revoked like any other.
 - **Revoke all** under the list (asks: "Revoke all 3 tokens? Every client is cut at once.").
 
 **Connected now**: one row per client: the token's name, its address, since when, "listening to events" when it holds
@@ -176,6 +193,10 @@ one WebSocket for input only).
   (A slow hash is for guessable passwords; a 256-bit random token can't be guessed, *the designer's call*.)
 - **Failed authentication** (no token, a wrong one, an expired or revoked one, a used or stale ticket): `401` with
   `WWW-Authenticate: Bearer` and `{"error":{"code":"auth","message":"…"}}`, the same body whatever the reason.
+- **Pairing:** `POST /v1/pair` with `{"code":"…"}`, without a token, and only with HTTPS, answers `{"token":"tpl_…"}`
+  for the code Pair a phone shows: while its dialog is open, within 10 minutes, once. Any other code is a failed
+  authentication (`401`, counted by the limiter like a wrong token); a code over 128 characters or no code is `400`.
+  The code goes to Aegis's UI, which compares the hashes, mints the token and keeps only its hash, like New token….
 
 ### Scopes
 
@@ -477,11 +498,20 @@ don't know. A change that would break a client is `/v2`, served beside `/v1` for
 ### Encryption
 
 - **TLS is built in** with rustls (in the tree) and ring's crypto: TLS 1.2 and 1.3, ALPN `http/1.1`.
-- **Aegis's certificate:** made at the first need with rcgen, an ECDSA P-256 key, valid five years, for `localhost`,
-  `127.0.0.1` and `::1`, kept in `<data>/api/cert.pem` and `key.pem`. Its fingerprint is the SHA-256 of its DER,
-  shown as 32 hex pairs, as Node's `fingerprint256` gives it: a client pins it (docs/api.md shows Node and curl; Aegis
-  to Aegis will). **New certificate** replaces both files. *The designer's call:* names don't matter for pinning, and
-  a browser warns about any self-signed certificate.
+- **Aegis's authority:** made at the first need with rcgen, an ECDSA P-256 key, valid ten years, kept in
+  `<data>/api/ca.pem` and `ca-key.pem` (the key readable by the person alone). A CA that issues only for `localhost`
+  and private addresses: its Name Constraints permit the DNS name `localhost` and the IPs `10/8`, `172.16/12`,
+  `192.168/16`, `100.64/10` (Tailscale's), `127/8` and `::1`, so a phone that installs it trusts it for nothing else,
+  and its key, were it to leak, couldn't stand in for a site on the internet. Its fingerprint is the SHA-256 of its
+  DER, shown as 32 hex pairs, as Node's `fingerprint256` gives it: a client installs it or pins it (docs/api.md shows
+  Node; Aegis to Aegis pins it). **New certificate** makes another authority.
+- **Aegis's certificate:** issued by the authority when the server starts, and kept in memory only: an ECDSA P-256 key
+  of its own, valid 397 days from the day before (browsers take up to 398; a phone's clock may run behind), no
+  subject, and as alternative names `localhost`, `127.0.0.1`, `::1` and every private IPv4 address of this computer's
+  networks (a LAN's, Tailscale's). The server sends the authority's certificate after it. A handshake looks at the
+  addresses again, at most every 10 seconds, and the authority issues another certificate when one comes or goes, and
+  30 days before it ends. *The designer's call:* once the authority is installed, a browser takes Aegis at those
+  addresses without a warning; pinning doesn't look at names.
 - **The person's certificate:** a PEM certificate chain and a PEM private key, read at each start of the server; a
   file that doesn't load keeps the API off, with the reason in Settings and the title bar.
 - No `Strict-Transport-Security`: a browser would pin the host for a year, and Aegis's certificate (or a tunnel's)

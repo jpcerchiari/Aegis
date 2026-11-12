@@ -46,7 +46,7 @@ draw, its live deltas, terminal frames and typed input. Part 2 is the two ends t
    see it live, type into its terminals with a real keyboard, move and resize its blocks, answer its agents' requests.
 2. **Two clicks on each side.** Home: Share… ▸ New share ▸ Make code ▸ Copy. Mirror: Connect to a Aegis… ▸ paste ▸
    Connect.
-3. **Encrypted, and checked.** Always TLS off loopback. A direct connection pins Aegis's certificate; a tunnel's is
+3. **Encrypted, and checked.** Always TLS off loopback. A direct connection pins Aegis's authority; a tunnel's is
    checked against the web's authorities, and a network that reads HTTPS (a company proxy) is told plainly.
 4. **The key is kept safely.** The token lives in the system's keyring, never in a log, `config.toml`, the data folder
    (unless the person chooses a file) or a crash.
@@ -97,7 +97,7 @@ draw, its live deltas, terminal frames and typed input. Part 2 is the two ends t
 - **Connection code:** one line holding the address, the token and (direct only) the certificate's fingerprint. Shown
   once, like a token.
 - **Remote workspace:** the mirror's sidebar tile and canvas for a share.
-- **Way in:** **pinned** (direct: LAN, VPN, Tailscale; the mirror pins Aegis's certificate) or **public** (a tunnel
+- **Way in:** **pinned** (direct: LAN, VPN, Tailscale; the mirror pins Aegis's authority) or **public** (a tunnel
   or a proxy with a public certificate; the mirror checks the web's authorities).
 
 ## What a person sees
@@ -155,8 +155,8 @@ bottom-right; tooltip "Mirrored now on Another computer (203.0.113.7)". The Home
 **Elsewhere on home:**
 
 - Settings ▸ API lists a share's token with the other tokens, its line saying "share of API"; Revoke there is the same.
-- **New certificate** in Settings ▸ API also says how many direct shares it breaks: "Clients that pinned the old one
-  stop connecting, 2 mirrors connected directly among them: share again for them."
+- **New certificate** in Settings ▸ API also says how many direct shares it breaks: "Clients that pinned or installed
+  the old one stop connecting, 2 mirrors connected directly among them: share again for them."
 - **Deleting a workspace** leaves its shares' tokens seeing nothing (part 1 already takes the id out of every token's
   list, so a later workspace given the same id is never theirs), and the mirror says "deleted" from `GET /v1/me`
   (*the designer's call*: revoking them would turn every mirror's message into "revoked", since part 1 answers every
@@ -179,7 +179,7 @@ winx-desktop"); its body is a form of labelled rows; its foot says how it goes, 
 - **Code:** a field, focused, in the terminal's font, its format as its placeholder (`tplc1_…`). The line under it
   says where to make one while it is empty ("Make one on the other computer: a workspace's Share… ▸ New share"); as soon
   as it holds a code, what it is, after a check: "aegis.example.com · checks its public certificate" or
-  "192.168.1.5:7411 · pins Aegis's certificate AB:CD:…:9F", or in red what is wrong: "This isn't a connection code:
+  "192.168.1.5:7411 · pins Aegis's authority AB:CD:…:9F", or in red what is wrong: "This isn't a connection code:
   one starts with tplc1_.", "The code is cut short: copy it again whole.", "This code is from a newer Aegis: update
   this one.", "This code's address isn't encrypted: Aegis connects in plain HTTP only to this computer itself."
 - **Key:** where the key goes: "Kept in this computer's keyring (the Keychain / the Credential Manager / the Secret
@@ -265,7 +265,7 @@ answering are disabled.
 | The workspace is stopped at home (`stopped`, no blocks) | Not dimmed: a card in the canvas's middle, "API is stopped on winx-desktop." **Start it** (`show`, which starts it and shows it on winx-desktop's screen; the button's tooltip says so) | — |
 | `event: replaced`: another computer connected with this share's code | "Another computer connected with this share's code, so this one stopped. Each computer needs its own share." **Connect here again** · **Forget** | No |
 | Pinned, and the certificate's fingerprint differs | "winx-desktop's certificate changed since you connected. If you made a New certificate there, share again and paste the new code. If you didn't, someone may be between the two computers: don't connect." **Paste a new code…** · **Forget** | No |
-| Public, and the certificate isn't valid | "aegis.example.com's certificate isn't valid: it expired / it is for another name / no authority this computer trusts signed it. Fix it where the tunnel or proxy runs, then **Try again**." A self-signed one adds: "If it is Aegis's own, share Directly instead: it is pinned." | No |
+| Public, and the certificate isn't valid | "aegis.example.com's certificate isn't valid: it expired / it is for another name / no authority this computer trusts signed it. Fix it where the tunnel or proxy runs, then **Try again**." One sent alone, or with only an authority that signed itself (as Aegis's own is), adds: "If it is Aegis's own, share Directly instead: it is pinned." | No |
 | Public, valid only through an authority this computer added | [A private authority](#a-private-authority) | No |
 | Cloudflare Access answered (a redirect to `*.cloudflareaccess.com`, or its 403) | "Cloudflare Access stands in front of aegis.example.com. Add a service token in Paste a new code… ▸ Network, and allow it in the Access policy." | No |
 | Something that isn't a Aegis answered (HTML, a 404 without Aegis's error body) | "aegis.example.com didn't answer as a Aegis (HTTP 404, text/html). Check that the tunnel points at port 7411." **Try again** | No |
@@ -288,7 +288,7 @@ answering are disabled.
 *The designer's call* (the orchestrator left its format open):
 
 - `tplc1_` followed by the base64url (no padding) of a JSON object:
-  `{"url":"https://aegis.example.com","token":"tpl_…","pin":"ab12…"}`. `pin` (the certificate's SHA-256, 64 hex
+  `{"url":"https://aegis.example.com","token":"tpl_…","pin":"ab12…"}`. `pin` (the SHA-256 of Aegis's authority, 64 hex
   characters, no colons) is there only for a pinned share. `url` is the address with its scheme, port and optional
   path prefix; the mirror calls `<url>/v1/…`.
 - `1` is the format's version: a mirror that meets `tplc2_` says the code is from a newer Aegis. Unknown JSON fields
@@ -305,7 +305,7 @@ checks is *the designer's call*.
 
 | Way in | TLS check | Server name (SNI) |
 |---|---|---|
-| **Pinned** | The leaf certificate's SHA-256 equals the pin, compared in constant time; its handshake signature is verified with ring's algorithms. Names and dates are not looked at: Aegis's certificate is made for `localhost` and lasts five years, and the pin is its identity | The host when it is a name; none for an IP |
+| **Pinned** | A certificate the server sends after its own has the pin as its SHA-256, compared in constant time: Aegis's authority. The server's certificate must be one it issued, valid now (signature, dates and the authority's name constraints, by webpki); its handshake signature is verified with ring's algorithms. Names are not looked at: the pin is the identity, and an address the certificate wasn't issued for yet is the same host. A refusal for dates says the certificate expired (the clocks disagree); any other is a changed pin. A pin of the server's own certificate, from codes made before Aegis had an authority, is still accepted, but no Aegis shows such a certificate any more: those shares need a new code | The host when it is a name; none for an IP |
 | **Public** | The web PKI as the system checks it (rustls-platform-verifier): chain, name, dates, by Windows' and macOS's own verifiers (which fetch a root Windows hasn't loaded yet, and obey the computer's policies) and on Linux with the system's roots (rustls-native-certs). Then the [private authority](#a-private-authority) check | The host |
 | **Loopback** (`http://127.0.0.1`, `::1`, `localhost`) | None: plain HTTP to this computer, for an `ssh -L` forward or a test | — |
 

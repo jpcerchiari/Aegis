@@ -1,5 +1,5 @@
 //! Who answers: the verifiers the mirror's TLS asks (docs/specs/aegis-to-aegis.md, Trust).
-//! A direct share pins Aegis's certificate; a public one is checked by the system and then by
+//! A direct share pins Aegis's authority; a public one is checked by the system and then by
 //! Mozilla's list, so an authority the computer added (a company proxy's) is told apart. A refusal
 //! is a `rustls::Error::General` holding one of the marks below, so the dialer can say which after
 //! the handshake.
@@ -8,14 +8,17 @@ use crate::store::same;
 use ring::digest::{Context, SHA256, digest};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use tokio_rustls::rustls::client::WebPkiServerVerifier;
 use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
+};
+use tokio_rustls::rustls::client::{
+    WebPkiServerVerifier, verify_server_cert_signed_by_trust_anchor,
 };
 use tokio_rustls::rustls::crypto::{
     CryptoProvider, verify_tls12_signature, verify_tls13_signature,
 };
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use tokio_rustls::rustls::server::ParsedCertificate;
 use tokio_rustls::rustls::{
     self, CertificateError, ClientConfig, DigitallySignedStruct, Error, RootCertStore,
     SignatureScheme,
@@ -29,7 +32,8 @@ pub(crate) const EXPIRED: &str = "aegis:expired";
 pub(crate) const NAME: &str = "aegis:name";
 /// No authority the computer knows signed it, though the server sent more than its certificate.
 pub(crate) const ISSUER: &str = "aegis:issuer";
-/// No authority known, and the server sent its certificate alone: maybe Aegis's own.
+/// No authority known, and the server sent its certificate alone or with only an authority that
+/// issued itself: maybe Aegis's own.
 pub(crate) const ALONE: &str = "aegis:issuer-alone";
 pub(crate) const OTHER: &str = "aegis:other";
 
@@ -51,8 +55,11 @@ fn not_the_pinned(error: Error) -> Error {
     }
 }
 
-/// Aegis's own certificate, by identity: its SHA-256. Names and dates are not looked at
-/// (Aegis's is made for `localhost` and lasts five years); the handshake's signatures are.
+/// Aegis's own authority, by identity: the SHA-256 of its certificate, which the server sends after
+/// its own; the server's must be one the authority issued, valid now. Names are not looked at: the
+/// pin is the identity, and an address the certificate wasn't issued for yet is the same host.
+/// The handshake's signatures are verified. A pin of the server's certificate itself, from
+/// before Aegis had an authority, is still the identity it was.
 #[derive(Debug)]
 pub(crate) struct Pinned {
     pin: [u8; 32],
@@ -74,22 +81,38 @@ impl Pinned {
             provider: provider(),
         })
     }
+
+    fn is_pinned(&self, cert: &CertificateDer<'_>) -> bool {
+        same(digest(&SHA256, cert.as_ref()).as_ref(), &self.pin)
+    }
 }
 
 impl ServerCertVerifier for Pinned {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
+        intermediates: &[CertificateDer<'_>],
         _name: &ServerName<'_>,
         _ocsp: &[u8],
-        _now: UnixTime,
+        now: UnixTime,
     ) -> Result<ServerCertVerified, Error> {
-        if same(digest(&SHA256, end_entity.as_ref()).as_ref(), &self.pin) {
-            Ok(ServerCertVerified::assertion())
-        } else {
-            Err(refuse(PIN))
+        if self.is_pinned(end_entity) {
+            return Ok(ServerCertVerified::assertion());
         }
+        let Some(authority) = intermediates.iter().find(|cert| self.is_pinned(cert)) else {
+            return Err(refuse(PIN));
+        };
+        let mut roots = RootCertStore::empty();
+        roots.add(authority.clone()).map_err(|_| refuse(PIN))?;
+        let cert = ParsedCertificate::try_from(end_entity).map_err(|_| refuse(PIN))?;
+        let algorithms = self.provider.signature_verification_algorithms.all;
+        verify_server_cert_signed_by_trust_anchor(&cert, &roots, &[], now, algorithms)
+            .map(|()| ServerCertVerified::assertion())
+            // Expired is said: the clocks disagree. Anything else is not the authority's.
+            .map_err(|error| match mark_of(&error, &[]) {
+                EXPIRED => refuse(EXPIRED),
+                _ => refuse(PIN),
+            })
     }
 
     fn verify_tls12_signature(
@@ -224,7 +247,7 @@ fn mark_of(error: &Error, intermediates: &[CertificateDer<'_>]) -> &'static str 
         Error::InvalidCertificate(CertificateError::NotValidForName)
         | Error::InvalidCertificate(CertificateError::NotValidForNameContext { .. }) => NAME,
         Error::InvalidCertificate(CertificateError::UnknownIssuer) => {
-            if intermediates.is_empty() {
+            if intermediates.iter().all(|cert| self_issued(cert.as_ref())) {
                 ALONE
             } else {
                 ISSUER
@@ -253,19 +276,33 @@ fn der(bytes: &[u8]) -> Option<(u8, &[u8], &[u8])> {
     (len <= bytes.len()).then(|| (tag, &bytes[..len], &bytes[len..]))
 }
 
-/// The second a certificate ends (its `notAfter`), read from its DER. None when it can't be read,
-/// and then nothing is remembered about it.
-fn not_after(cert: &[u8]) -> Option<u64> {
+/// A certificate's issuer, validity and subject (their contents), read from its DER.
+fn issuer_validity_subject(cert: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
     let (_, cert, _) = der(cert)?;
     let (_, tbs, _) = der(cert)?;
-    // [0] version (optional), serial, signature, issuer, then validity: notBefore, notAfter.
+    // [0] version (optional), serial, signature, then issuer, validity, subject.
     let (tag, _, mut rest) = der(tbs)?;
     if tag == 0xa0 {
         rest = der(rest)?.2;
     }
     let rest = der(rest)?.2;
-    let rest = der(rest)?.2;
-    let (_, validity, _) = der(rest)?;
+    let (_, issuer, rest) = der(rest)?;
+    let (_, validity, rest) = der(rest)?;
+    let (_, subject, _) = der(rest)?;
+    Some((issuer, validity, subject))
+}
+
+/// Whether a certificate names itself as its issuer, as an authority's own does. False when it
+/// can't be read.
+fn self_issued(cert: &[u8]) -> bool {
+    issuer_validity_subject(cert).is_some_and(|(issuer, _, subject)| issuer == subject)
+}
+
+/// The second a certificate ends (its `notAfter`), read from its DER. None when it can't be read,
+/// and then nothing is remembered about it.
+fn not_after(cert: &[u8]) -> Option<u64> {
+    let (_, validity, _) = issuer_validity_subject(cert)?;
+    // notBefore, then notAfter.
     let (tag, time, _) = der(der(validity)?.2)?;
     let digits = |text: &[u8]| {
         text.iter().try_fold(0i64, |n, b| {
@@ -437,12 +474,24 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn ca(name: &str) -> Authority {
+        authority(name, None)
+    }
+
+    /// An authority named `name`, signed by `over` (an intermediate of a public chain), or by
+    /// itself.
+    fn authority(name: &str, over: Option<&Authority>) -> Authority {
         let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
         params.distinguished_name.push(DnType::CommonName, name);
         let key = pair();
-        let der = params.self_signed(&key).unwrap().der().clone();
+        let made = match over {
+            Some(over) => {
+                params.signed_by(&key, &rcgen::Issuer::from_params(&over.params, &over.key))
+            }
+            None => params.self_signed(&key),
+        };
+        let der = made.unwrap().der().clone();
         Authority { params, key, der }
     }
 
@@ -513,10 +562,20 @@ pub(crate) mod tests {
         }
     }
 
-    /// A TLS handshake in memory: a server that shows `chain` and signs with `signer`, and a
+    /// A TLS handshake in memory: a server that shows `leaf` and signs with `signer`, and a
     /// client that asks `verifier` about it; the client's refusal as its mark.
     fn handshake(
-        chain: &Leaf,
+        leaf: &Leaf,
+        signer: &KeyPair,
+        verifier: Arc<dyn ServerCertVerifier>,
+        name: &str,
+    ) -> Result<(), String> {
+        shake(vec![leaf.der.clone()], signer, verifier, name)
+    }
+
+    /// `handshake`, with a server that shows `chain`: its certificate, then the ones after it.
+    fn shake(
+        chain: Vec<CertificateDer<'static>>,
         signer: &KeyPair,
         verifier: Arc<dyn ServerCertVerifier>,
         name: &str,
@@ -524,7 +583,7 @@ pub(crate) mod tests {
         let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(signer.serialize_der()));
         let key = provider().key_provider.load_private_key(key).unwrap();
         let certified = CertifiedKey {
-            cert: vec![chain.der.clone()],
+            cert: chain,
             key,
             ocsp: None,
         };
@@ -585,6 +644,37 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_pinned_authority_vouches_for_the_certificates_it_issued() {
+        let (a, b) = (ca("a"), ca("b"));
+        let pinned = || Arc::new(Pinned::new(&tls::pin(&a.der)).unwrap());
+        let with = |leaf: &Leaf, after: &[&Authority]| {
+            let mut chain = vec![leaf.der.clone()];
+            chain.extend(after.iter().map(|authority| authority.der.clone()));
+            chain
+        };
+        let issued = leaf(&a, "localhost", false);
+        // Names aren't looked at: an address it wasn't issued for is the same host.
+        for name in ["localhost", "192.168.1.5"] {
+            let got = shake(with(&issued, &[&a]), &issued.key, pinned(), name);
+            assert_eq!(got, Ok(()), "{name}");
+        }
+        // The authority isn't sent: nothing to find the pin in.
+        let alone = shake(with(&issued, &[]), &issued.key, pinned(), "localhost");
+        assert_eq!(alone, Err(PIN.to_string()));
+        // The pinned authority sent after another's certificate, or after one of its own shown
+        // by someone without the key: not its owner.
+        let stranger = leaf(&b, "localhost", false);
+        let wrong_issuer = shake(with(&stranger, &[&a]), &stranger.key, pinned(), "localhost");
+        assert_eq!(wrong_issuer, Err(PIN.to_string()));
+        let forged = shake(with(&issued, &[&a]), &stranger.key, pinned(), "localhost");
+        assert_eq!(forged, Err(PIN.to_string()));
+        // Its certificate ended: the clocks disagree, and it is said.
+        let ended = leaf(&a, "localhost", true);
+        let expired = shake(with(&ended, &[&a]), &ended.key, pinned(), "localhost");
+        assert_eq!(expired, Err(EXPIRED.to_string()));
+    }
+
+    #[test]
     fn a_public_certificate_is_checked_twice() {
         let (a, b) = (ca("a"), ca("b"));
         let both = || Checked::new(roots(&[&a]), roots(&[&a]), false);
@@ -599,8 +689,19 @@ pub(crate) mod tests {
         );
         let stranger = leaf(&b, "localhost", false);
         assert_eq!(check(&both(), &stranger, &[]), Err(ALONE.into()));
+        // Sent with the authority that issued it, one of its own making: maybe Aegis's too.
         assert_eq!(
-            check(&both(), &stranger, std::slice::from_ref(&a.der)),
+            check(&both(), &stranger, std::slice::from_ref(&b.der)),
+            Err(ALONE.into())
+        );
+        // Sent with an authority another one signed: a chain whose root isn't known here.
+        let under_b = authority("under b", Some(&b));
+        assert_eq!(
+            check(
+                &both(),
+                &leaf(&under_b, "localhost", false),
+                std::slice::from_ref(&under_b.der)
+            ),
             Err(ISSUER.into())
         );
         let shown = leaf(&a, "localhost", false);
@@ -712,8 +813,13 @@ pub(crate) mod tests {
         );
         let stranger = leaf(&b, "localhost", false);
         assert_eq!(check(&checked(), &stranger, &[]), Err(ALONE.into()));
+        let under_b = authority("under b", Some(&b));
         assert_eq!(
-            check(&checked(), &stranger, std::slice::from_ref(&a.der)),
+            check(
+                &checked(),
+                &leaf(&under_b, "localhost", false),
+                std::slice::from_ref(&under_b.der)
+            ),
             Err(ISSUER.into())
         );
         // Nothing wrong the list can find: the platform's refusal stays "other".
@@ -858,7 +964,13 @@ pub(crate) mod tests {
         let whole = leaf(&a, "x", false).der;
         for cut in (0..whole.len()).step_by(7) {
             let _ = not_after(&whole[..cut]);
+            assert!(!self_issued(&whole[..cut]));
         }
+        // An authority names itself as its issuer; what it signs, or a junk, doesn't.
+        assert!(self_issued(a.der.as_ref()));
+        assert!(!self_issued(whole.as_ref()));
+        assert!(!self_issued(authority("under a", Some(&a)).der.as_ref()));
+        assert!(!self_issued(b"junk"));
     }
 
     #[test]

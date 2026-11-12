@@ -17,6 +17,39 @@ const labels = {
 let session;
 let terminal;
 
+// The token stays on this phone until Forget this phone, or until Aegis refuses it.
+const saved = "aegis.token";
+const revoked = "This phone's token expired or was revoked. Pair it again: in Aegis, Settings ▸ API ▸ Pair a phone…";
+
+function remembered() {
+    try {
+        return localStorage.getItem(saved) || "";
+    } catch {
+        return "";
+    }
+}
+
+function remember(token) {
+    try {
+        localStorage.setItem(saved, token);
+    } catch {
+        // Storage refused (a private window): the token lasts as long as the page.
+    }
+}
+
+function forgetToken() {
+    try {
+        localStorage.removeItem(saved);
+    } catch {
+        // Nothing was kept.
+    }
+}
+
+function refused() {
+    forgetToken();
+    disconnect(revoked);
+}
+
 async function request(path, current, signal, input) {
     const headers = { Authorization: `Bearer ${current.token}` };
     if (input) headers["Content-Type"] = "application/json";
@@ -73,7 +106,7 @@ async function watch(path, current, signal, receive, interrupted) {
         }
         if (signal.aborted) return;
         if (failure?.status === 401) {
-            disconnect("The token expired or was revoked. Connect with a current token.");
+            refused();
             return;
         }
         const stopped = [403, 404, 422].includes(failure?.status);
@@ -259,7 +292,7 @@ async function send(input, clearText = false) {
         if (clearText) textField.value = "";
     } catch (error) {
         if (view !== terminal) return;
-        if (error.status === 401) disconnect("The token expired or was revoked.");
+        if (error.status === 401) refused();
         else status.textContent = error.status ? error.message : "Delivery could not be confirmed. Check the terminal before sending again.";
     } finally {
         if (view === terminal) {
@@ -296,26 +329,29 @@ function disconnect(message = "") {
     byId("terminals").replaceChildren();
     byId("overview").hidden = true;
     byId("disconnect").hidden = true;
+    byId("forget").hidden = true;
+    byId("resume").hidden = !remembered();
     connectForm.hidden = false;
     tokenField.value = "";
     byId("connection").textContent = message;
-    tokenField.focus();
+    (byId("resume").hidden ? tokenField : byId("resume")).focus();
 }
 
-connectForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const token = tokenField.value.trim();
+async function connect(token) {
     if (!token || session) return;
     const current = { token, controller: new AbortController(), blocks: new Map(), workspaces: new Map() };
     session = current;
     tokenField.value = "";
-    connectForm.querySelector("button").disabled = true;
+    byId("paste").disabled = true;
+    byId("resume").disabled = true;
     byId("connection").textContent = "Connecting…";
     try {
         const response = await request("/v1/me", current, current.controller.signal);
         current.me = await response.json();
+        remember(token);
         connectForm.hidden = true;
         byId("disconnect").hidden = false;
+        byId("forget").hidden = false;
         byId("empty").textContent = "Waiting for terminals…";
         byId("empty").hidden = false;
         byId("overview").hidden = false;
@@ -324,11 +360,63 @@ connectForm.addEventListener("submit", async (event) => {
             byId("connection").textContent = message;
         });
     } catch (error) {
+        if (error.status === 401 && token === remembered()) {
+            refused();
+            return;
+        }
         disconnect(error.status ? error.message : "Could not reach Aegis. Check the connection and try again.");
     } finally {
-        connectForm.querySelector("button").disabled = false;
+        byId("paste").disabled = false;
+        byId("resume").disabled = false;
     }
+}
+
+// The second QR code of Aegis's Pair a phone: a code that works once, for this phone's token.
+async function pair(code) {
+    byId("connection").textContent = "Pairing…";
+    let body;
+    try {
+        const response = await fetch("/v1/pair", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+            credentials: "omit",
+            redirect: "error",
+            mode: "same-origin",
+        });
+        body = await response.json().catch(() => null);
+        if (!response.ok || !body?.token) {
+            disconnect(body?.error?.message || `Aegis returned HTTP ${response.status}.`);
+            return;
+        }
+    } catch {
+        disconnect("Could not reach Aegis. Check the connection, then scan the second QR code again.");
+        return;
+    }
+    await connect(body.token);
+}
+
+connectForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    connect(tokenField.value.trim());
 });
 
+byId("resume").onclick = () => connect(remembered());
 byId("disconnect").onclick = () => disconnect();
+byId("forget").onclick = () => {
+    if (!confirm("Forget this phone's token? Aegis keeps it until you revoke it in Settings ▸ API.")) return;
+    forgetToken();
+    disconnect("This phone forgot its token. Revoke it in Aegis too: Settings ▸ API.");
+};
 byId("back").onclick = () => showOverview();
+
+// A code from the QR code leaves the address at once: it works once, and the history keeps it.
+const code = new URLSearchParams(location.hash.slice(1)).get("code");
+if (code) {
+    history.replaceState(null, "", location.pathname + location.search);
+    pair(code);
+} else if (remembered()) {
+    connect(remembered());
+} else {
+    byId("resume").hidden = true;
+}
